@@ -1,244 +1,203 @@
 <div align="center">
 
-# Prompt
+# Listen
 
-**A free, minimalist teleprompter that keeps the script — not the interface — at the center of the experience.**
+**A tiny, audio-only player for Windows, built around what I wanted for myself: open a file, listen, and keep everything else out of the way.**
 
-No account. No backend. No build step.
+Native, minimal, and private.
 
-[**Open Prompt →**](https://prompt.bemorin.com)
+**Windows 10/11 · MIT · No Electron · No account · No telemetry**
 
-[Website](https://prompt.bemorin.com) · [Bemorin](https://bemorin.com) · [MIT License](LICENSE)
+[**Download Listen →**](https://github.com/bemorin/listen/releases/latest)
+
+[Releases](https://github.com/bemorin/listen/releases) · [Bemorin](https://bemorin.com) · [MIT License](LICENSE.md)
 
 </div>
 
-![Prompt teleprompter reading view](screenshots/reader.webp)
+<p align="center">
+  <img src="docs/screenshots/listen-full.png" alt="Listen audio player" width="720">
+</p>
 
-## Why Prompt?
+## Why Listen?
 
-Most teleprompters add controls, chrome, setup, or distractions around the one thing that matters: the words you need to read.
+Listen started from a simple personal need: I wanted a small audio player that opened quickly and stayed out of the way.
 
-Prompt is designed to disappear while you use it.
+Something I could use for a single file or a small queue without opening a full media library, video player, streaming interface, or anything else I did not need.
 
-- **Smooth playback** with adjustable speed
-- **Manual positioning** with mouse wheel, trackpad, or `↑` / `↓`
-- **Visual Markdown editor** with portable Markdown source underneath
-- **Bold, italic, underline, headings, quotes, lists, separators, and text colors**
-- **Search** with `Ctrl+F` / `Cmd+F`
-- **Click-to-edit** from the teleprompter directly to the corresponding script line
-- **Dark and Light modes**
-- **Mirror mode** for beam-splitter teleprompter glass
-- **Optional reading guide**
-- **Optional auto-hide while playing**
-- **Fullscreen mode**
-- **Local persistence** for your script and preferences
-- **Multilingual interface**
-- **No framework or runtime dependency**
+I still wanted the useful parts — drag & drop, repeat, a mini player, taskbar controls, Windows integration, and the option to keep the player above other windows.
 
-## Try it
+That became Listen.
 
-The easiest way to use Prompt is the hosted version:
+## Features
 
-### [prompt.bemorin.com →](https://prompt.bemorin.com)
-
-No installation or account is required.
-
-Prompt can also run entirely from the repository. Download or clone it and open `index.html` in a modern browser.
-
-## Screenshots
-
-| Visual Markdown editor | Settings |
-| --- | --- |
-| ![Prompt visual Markdown editor with formatting and text colors](screenshots/markdown-editor.webp) | ![Prompt Settings with theme, font and reading controls](screenshots/settings.webp) |
-
-| Search | Light mode |
-| --- | --- |
-| ![Prompt in-app script search](screenshots/search.webp) | ![Prompt in Light mode](screenshots/light-mode.webp) |
+- **Focused audio playback** — MP3, WAV, WMA, M4A, AAC and FLAC
+- **Minimal interface** — playback controls without a media-library UI
+- **Mini player** — compact controls when you want Listen out of the way
+- **Always on top** — keep the full player or mini player above other windows
+- **Play queue** — add several files and keep the queue between launches
+- **Drag & drop** — drop audio directly into the player or queue
+- **Repeat modes** — repeat the queue or the current track
+- **Artwork** — displays available Windows artwork with a lightweight fallback
+- **Taskbar controls** — Previous, Play/Pause, Next and Repeat from the Windows taskbar preview
+- **Windows integration** — Open with Listen, Default Apps and File Explorer actions
+- **Local by default** — no account, telemetry, cloud library or network requirement for playback
 
 ## Quick start
 
-### Use Prompt online
+Download the latest version from [GitHub Releases](https://github.com/bemorin/listen/releases/latest).
 
-Open [prompt.bemorin.com](https://prompt.bemorin.com), add your script, and press **Play**.
+### Installer
 
-### Run locally
+Use:
 
-No build step is required.
-
-1. Download or clone this repository.
-2. Open `index.html` in a modern browser.
-3. Open **Script**.
-4. Paste or write your text.
-5. Press **Done**.
-6. Press **Space** or the Play button.
-
-That's it.
-
-### Optional local server
-
-Opening `index.html` directly is enough for normal use and development.
-
-If you prefer a localhost environment, use any static server you already have. For example:
-
-**Windows**
-
-```bash
-py -m http.server 8080
+```text
+Listen-Setup-<version>.exe
 ```
 
-**macOS / Linux**
+Listen is installed for your Windows user and registered with Windows.
 
-```bash
-python3 -m http.server 8080
+No administrator rights are required.
+
+### Portable
+
+Or download:
+
+```text
+Listen-Portable-<version>.zip
 ```
 
-Then open `http://localhost:8080`.
+Extract it and launch `Listen.exe`.
 
-Python is optional and is not required by Prompt.
+No installation required.
 
-## Markdown
+## Mini player
 
-Prompt stores scripts as Markdown while presenting them through a lightweight visual editor.
+Switch to mini mode when you only want the essentials on screen.
 
-Markdown markers stay out of the way during normal editing, while the underlying script remains portable plain text.
+<p align="center">
+  <img src="docs/screenshots/listen-mini.png" alt="Listen mini player" width="612">
+</p>
 
-Supported formatting includes:
+The mini player keeps playback, progress and repeat controls available while using very little screen space.
 
-- `#`, `##`, `###` headings
-- **bold**
-- *italic*
-- underline
-- quotes
-- unordered lists
-- numbered lists
-- strikethrough
-- existing Markdown code
-- existing Markdown links
-- horizontal separators
-- restrained semantic text colors
+Both the full player and mini player can stay **always on top**.
 
-Combined formatting is supported without exposing stray Markdown markers in the visual editor.
+## Play queue
 
-Bold, Italic, and Underline behave as deterministic toggles, so repeated formatting changes do not accumulate extra `*` or `+` markers.
+Add several files at once, drag audio into the queue, jump to a track, remove items or clear the queue.
 
-A standalone `***` stays editable while you type, allowing `***bold italic***`. Pressing **Enter** while the line contains only `***` commits it as a separator.
+<p align="center">
+  <img src="docs/screenshots/listen-queue.png" alt="Listen play queue" width="720">
+</p>
 
-Numbered lists continue naturally from `1.` to `2.`, `3.`, and so on. Pressing Enter on an empty numbered item exits the list.
+The queue is stored locally and can persist between launches.
 
-Editing or formatting a script preserves the current teleprompter position instead of jumping back to the beginning.
+## Windows integration
 
-### Text colors
+Listen integrates with Windows while leaving the final choice of default application to you.
 
-Prompt includes six restrained choices:
+Once installed, Listen can appear in:
 
-**Default · Copper · Sage · Sky · Rose · Violet**
+- **Open with / Choose another app**
+- **Default apps**
+- **Play with Listen**
+- **Add to Listen play queue**
 
-Colors adapt between Dark and Light modes for legibility.
+Selecting several audio files and choosing **Play with Listen** adds them to the queue and starts with the first track.
 
-Applying a color to a larger selection replaces older colors inside that selection rather than nesting them. **Default** removes text color while preserving other formatting.
-
-## Privacy
-
-Prompt is local-first.
-
-Your script and interface preferences are stored in the browser's `localStorage` so they can persist between sessions in the same browser profile.
-
-Your script is **not sent to a Prompt/Bemorin backend**.
-
-When internet access is available, Prompt may request webfont files for Inter, Outfit, and Playfair Display from Google Fonts. Those requests do not contain your teleprompter script.
-
-System, Times New Roman, and Mono rely on locally available fonts.
-
-Clearing browser or site storage may remove saved scripts and preferences.
-
-## Languages
-
-Prompt automatically detects the browser language.
-
-Currently supported:
-
-- English
-- Français
-- Español
-- 日本語
-- 简体中文
-- Deutsch
-- Italiano
-- Português
-- 한국어
-
-Unsupported languages fall back to English.
-
-User scripts are never automatically translated.
+Listen never silently overrides your Windows default-app choice.
 
 ## Keyboard shortcuts
 
 | Shortcut | Action |
 | --- | --- |
 | `Space` | Play / pause |
-| `↑` | Move one line up |
-| `↓` | Move one line down |
-| `←` | Slower |
-| `→` | Faster |
-| `+` / `-` | Increase / decrease text size |
-| `Home` | Restart |
-| `E` | Open Script |
-| `Ctrl+F` / `Cmd+F` | Search script |
-| `F` | Toggle fullscreen |
-| `M` | Toggle mirror mode |
-| `Esc` | Close open controls |
+| `←` / `→` | Seek -5 s / +5 s |
+| `Ctrl+O` | Add audio files |
+| `Ctrl+L` | Show / hide play queue |
+| `Ctrl+M` | Mini mode |
+| `Ctrl+T` | Always on top |
+| `Ctrl+R` | Cycle repeat mode |
+| `Delete` | Remove selected queue item |
+| `Esc` | Restore from mini mode |
+
+## Privacy
+
+Listen works with your local audio files and stores its preferences and play queue locally.
+
+There is:
+
+- no account
+- no telemetry
+- no analytics
+- no cloud sync
+- no network requirement for playback
+
+Local state is stored in:
+
+```text
+%APPDATA%\Listen
+```
+
+## Build from source
+
+Listen is a native Windows application built with WPF/.NET Framework and Windows media capabilities.
+
+Clone the repository and run:
+
+```bat
+build-windows.bat
+```
+
+A successful release build creates the installer and portable package inside `release/`.
+
+No Electron, Chromium, Node.js or bundled browser runtime is required.
 
 ## Contributing
 
 Contributions are welcome.
 
-Good contributions keep Prompt focused on what makes it useful: a fast, quiet, local-first teleprompter with as little interface as possible.
+Found a bug? Have an idea? Want to improve Listen?
 
-You can help by:
+You can [open an issue](https://github.com/bemorin/listen/issues) or submit a pull request.
 
-- reporting bugs
-- improving accessibility
-- improving browser compatibility
-- refining translations
-- adding or correcting language support
-- improving documentation
-- proposing focused UX improvements
-- submitting small, well-scoped pull requests
+When contributing, please keep the core principles of Listen in mind:
 
-When contributing, please keep these principles in mind:
-
-- **Minimal by default**
-- **The script stays visually dominant**
+- **Small and focused**
+- **Native where possible**
 - **No unnecessary dependencies**
-- **Fast startup**
-- **Local-first behavior**
-- **Accessible keyboard and pointer interactions**
-- **Focused changes over feature sprawl**
+- **Fast to open and use**
+- **Local-first**
+- **Minimal interface**
+- **Focused improvements over feature sprawl**
 
-For local development, edit `index.html` and open it directly in your browser. A local HTTP server is optional.
+For larger changes, opening an issue first is a good way to discuss the direction before working on an implementation.
 
-## Support Prompt
+## Platform support
 
-Prompt is free and open source.
+Listen 1.x is currently **Windows-only**.
 
-If it is useful to you, you can help the project by:
+Native macOS and Linux versions are possible future directions, provided they can preserve the same idea: **small, fast and platform-native**.
 
-- ⭐ starring the repository
-- sharing Prompt with people who may find it useful
-- contributing fixes, translations, or improvements
-- following future releases
-- discovering more minimal tools at [Bemorin.com](https://bemorin.com)
+The project does not plan to adopt Electron simply to claim cross-platform support.
 
-A sponsorship option may be added as the project grows.
+## Support Listen
 
-## About
+Listen is free and open source.
 
-Prompt is created by **Ben Morin / Bemorin**.
+If you find it useful, the easiest ways to support the project are to:
 
-[Prompt](https://prompt.bemorin.com) · [Bemorin.com](https://bemorin.com)
+- ⭐ [star the repository](https://github.com/bemorin/listen)
+- share Listen with someone who might find it useful
+- report bugs or suggest focused improvements
+- contribute code or documentation
 
 ## License
 
-Prompt is released under the [MIT License](LICENSE).
+Listen is open source under the [MIT License](LICENSE.md).
 
-Copyright © 2026 Bemorin.
+See [CHANGELOG.md](CHANGELOG.md) for public release notes.
+
+---
+
+You can follow me on X at [@benmorinbm](https://x.com/benmorinbm) for updates and new projects, or visit [bemorin.com](https://bemorin.com).
