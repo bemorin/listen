@@ -41,6 +41,8 @@ namespace ListenApp
         public bool AlwaysOnTop = false;
         public bool MiniMode = false;
         public bool QueueVisible = false;
+        // Mini player width in DIPs; the mini player is resizable horizontally.
+        public double MiniWidth = UiTokens.Layout.MiniWindowWidth;
         // 0 = off, 1 = repeat queue, 2 = repeat current track.
         public int LoopMode = 0;
         public readonly List<string> Queue = new List<string>();
@@ -105,6 +107,12 @@ namespace ListenApp
                         {
                             state.QueueVisible = string.Equals(value, "1", StringComparison.Ordinal);
                         }
+                        else if (string.Equals(key, "miniWidth", StringComparison.OrdinalIgnoreCase))
+                        {
+                            double parsed;
+                            if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out parsed) && parsed > 0)
+                                state.MiniWidth = Clamp(parsed, 0, 10000);
+                        }
                         else if (string.Equals(key, "loopMode", StringComparison.OrdinalIgnoreCase))
                         {
                             int parsed;
@@ -155,6 +163,7 @@ namespace ListenApp
                     "topmost=" + (AlwaysOnTop ? "1" : "0") + Environment.NewLine +
                     "mini=" + (MiniMode ? "1" : "0") + Environment.NewLine +
                     "queueVisible=" + (QueueVisible ? "1" : "0") + Environment.NewLine +
+                    "miniWidth=" + MiniWidth.ToString("0", CultureInfo.InvariantCulture) + Environment.NewLine +
                     "loopMode=" + LoopMode.ToString(CultureInfo.InvariantCulture) + Environment.NewLine;
                 AtomicWrite(SettingsPath, settings, Encoding.UTF8);
 

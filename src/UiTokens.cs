@@ -55,12 +55,28 @@ namespace ListenApp
         {
             public const double WindowWidth = 500;
             public const double WindowHeight = 410;
-            public const double WindowMinWidth = 440;
-            public const double WindowMinHeight = 350;
-            public const double QueueExpandedMinWindowHeight = 520;
+            // Normal and compact layouts; below VolumeSliderMinWindowWidth the slider hides.
+            public const double WindowMinWidth = 360;
+            public const double VolumeSliderMinWindowWidth = 440;
+            // Responsive layout (heights in DIPs, measured from rows unless listed here). Changes
+            // between layouts are spread over a band of height so a resize drag plays them.
+            public const double LayoutFadeBand = 32;
+            // Artwork height at which it starts fading as it shrinks towards nothing.
+            public const double ArtworkFadeStart = 12;
+            public const double TopBarHeight = 42;
             public const double MiniWindowWidth = 390;
             public const double MiniWindowHeight = 74;
-            public const double MiniWindowMinWidth = 350;
+            public const double MiniLeftInset = 12;
+            // At its narrowest the mini shows only its buttons; the skip-back glyph has more
+            // built-in padding than the expand glyph, so a smaller left inset centres them optically.
+            public const double MiniTightLeftInset = 4;
+            // Width beyond the five buttons below which the title is hidden rather than reduced to "…".
+            public const double MiniTitleMinSpace = 58;
+            // The mini player's minimum width is measured from its transport buttons.
+            public const double MiniResizeBorder = 6;
+            public const double QueuePanelHeight = 190;
+            // An edge within this distance of the work-area edge counts as docked to it.
+            public const double ScreenEdgeDockTolerance = 16;
 
             public const double ControlStripHorizontalMargin = 18;
             public const double ControlStripTopMargin = 4;
@@ -81,6 +97,14 @@ namespace ListenApp
 
             public const double MiniExpandButtonSize = 24;
             public const double MiniExpandIconSize = 16;
+        }
+
+        internal static class Motion
+        {
+            // Spring-eased (see WindowMorph.Ease). Large morphs get a little more time.
+            public const double ModeMorphMs = 420;
+            public const double QueueRevealMs = 340;
+            public const double LayoutSwapFadeMs = 160;
         }
 
         internal static class Icons

@@ -56,7 +56,17 @@ try {
     $system = Join-Path $frameworkRoot 'System.dll'
     $systemCore = Join-Path $frameworkRoot 'System.Core.dll'
     $systemDrawing = Join-Path $frameworkRoot 'System.Drawing.dll'
-    foreach ($required in @($system, $systemCore, $systemDrawing, $presentationFramework, $presentationCore, $windowsBase, $systemXaml)) {
+    # Windows Runtime (system media transport controls): Windows' own metadata plus the
+    # .NET Framework's projection facades. Nothing is bundled; all ship with Windows 10/11.
+    $winMetadata = Join-Path $env:WINDIR 'System32\WinMetadata'
+    $winRtReferences = @(
+        (Join-Path $winMetadata 'Windows.Foundation.winmd'),
+        (Join-Path $winMetadata 'Windows.Media.winmd'),
+        (Join-Path $winMetadata 'Windows.Storage.winmd'),
+        (Join-Path $frameworkRoot 'System.Runtime.dll'),
+        (Join-Path $frameworkRoot 'System.Runtime.WindowsRuntime.dll'),
+        (Join-Path $frameworkRoot 'System.Runtime.InteropServices.WindowsRuntime.dll'))
+    foreach ($required in @($system, $systemCore, $systemDrawing, $presentationFramework, $presentationCore, $windowsBase, $systemXaml) + $winRtReferences) {
         if (-not (Test-Path $required)) { throw ('Référence .NET introuvable : ' + $required) }
     }
 
@@ -102,7 +112,7 @@ using System.Reflection;
         ('/reference:{0}' -f $presentationCore),
         ('/reference:{0}' -f $presentationFramework),
         ('/reference:{0}' -f $systemXaml)
-    ) + $sources
+    ) + ($winRtReferences | ForEach-Object { '/reference:{0}' -f $_ }) + $sources
 
     Log ('Compilateur : ' + $csc)
     Log ('System.Drawing : ' + $systemDrawing)
