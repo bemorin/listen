@@ -306,6 +306,12 @@ pub mod erase {
 
     thread_local! {
         static AFTER_PAINT: std::cell::Cell<Option<fn()>> = const { std::cell::Cell::new(None) };
+        static ON_HOTKEY: std::cell::Cell<Option<fn(usize)>> = const { std::cell::Cell::new(None) };
+    }
+
+    /// Called with the id of each WM_HOTKEY the window receives (media keys, see hotkeys.rs).
+    pub fn set_on_hotkey(callback: fn(usize)) {
+        ON_HOTKEY.with(|c| c.set(Some(callback)));
     }
 
     /// Called right after each frame has been drawn and presented (winit renders inside
@@ -391,6 +397,12 @@ pub mod erase {
                     callback();
                 }
                 return result;
+            }
+            windows_sys::Win32::UI::WindowsAndMessaging::WM_HOTKEY => {
+                if let Some(callback) = ON_HOTKEY.with(|c| c.get()) {
+                    callback(wparam);
+                }
+                return 0;
             }
             WM_NCDESTROY => {
                 drop(Box::from_raw(data as *mut State));

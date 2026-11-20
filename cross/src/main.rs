@@ -2,6 +2,8 @@
 
 mod audio;
 mod dialogs;
+#[cfg(windows)]
+mod hotkeys;
 mod media;
 mod meta;
 mod platform;
@@ -127,6 +129,7 @@ struct App {
     snapping: bool,
     dpi_change_until: Option<Instant>,
     last_morph_step: Instant,
+    media_keys_held: bool,
     ambient_colours: Option<([u8; 3], [u8; 3])>,
 }
 
@@ -661,7 +664,42 @@ impl App {
         self.tick_position();
     }
 
+    /// Media keys follow Listen while it is the active player (see hotkeys.rs): held while a
+    /// track plays and for half an hour after a pause, released otherwise.
+    #[cfg(windows)]
+    fn update_media_keys(&mut self) {
+        let active = self.state.current.is_some()
+            && (self.engine.is_playing()
+                || self.engine.paused_for().map(|d| d < Duration::from_secs(30 * 60)).unwrap_or(false));
+        if active == self.media_keys_held {
+            return;
+        }
+        if let Some(hwnd) = self.with_winit(platform::hwnd).flatten() {
+            self.media_keys_held = hotkeys::set_registered(hwnd, active) && active;
+        }
+    }
+
+    #[cfg(windows)]
+    fn on_media_hotkey(&mut self, key: hotkeys::MediaKey) {
+        use hotkeys::MediaKey;
+        if !self.engine.is_playing() && hotkeys::forward_to_other_player(key) {
+            return;
+        }
+        match key {
+            MediaKey::PlayPause => self.toggle_play(),
+            MediaKey::Next => self.next(false),
+            MediaKey::Previous => self.previous(),
+            MediaKey::Stop => {
+                if self.engine.is_playing() {
+                    self.toggle_play();
+                }
+            }
+        }
+    }
+
     fn tick(&mut self) {
+        #[cfg(windows)]
+        self.update_media_keys();
         if self.engine.finished() {
             if self.state.repeat == Repeat::Track {
                 if let Some(i) = self.state.current {
@@ -1405,6 +1443,7 @@ fn main() -> Result<(), slint::PlatformError> {
         snapping: false,
         dpi_change_until: None,
         last_morph_step: Instant::now(),
+        media_keys_held: false,
         ambient_colours: None,
     }));
     APP.with(|a| *a.borrow_mut() = Some(app.clone()));
@@ -1499,6 +1538,12 @@ fn main() -> Result<(), slint::PlatformError> {
         platform::style_window(&winit_window);
         #[cfg(windows)]
         platform::erase::set_after_paint(|| with_app(|a| a.on_frame_presented()));
+        #[cfg(windows)]
+        platform::erase::set_on_hotkey(|id| {
+            if let Some(key) = hotkeys::key_for(id) {
+                with_app(|a| a.on_media_hotkey(key));
+            }
+        });
         with_app(|a| {
             let scale = a.scale() as f32;
             a.update_wordmark(scale);
