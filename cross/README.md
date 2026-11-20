@@ -5,6 +5,17 @@ It keeps the look and behaviour of the Windows app (`../src`, WPF), and refines 
 
 The WPF app stays the reference implementation and is untouched. This folder is self-contained.
 
+<p align="center">
+  <img src="docs/screenshots/listen-full.png" alt="Listen, full player" width="560">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/listen-queue.png" alt="Listen with the play queue open" width="380">
+  <img src="docs/screenshots/listen-mini.png" alt="Listen mini player" width="440">
+</p>
+
+The screenshots use generated demo tracks and covers. The ambient light around the artwork comes from each track's own cover.
+
 ## Stack decision
 
 The goal was the lightest possible footprint (binary size and memory) on three operating systems, with a fully custom UI.
