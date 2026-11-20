@@ -2,7 +2,12 @@
 
 This changelog tracks **public GitHub releases of Listen**. Internal development iterations before the first public release are intentionally not listed.
 
-## 2.0.0 — Unreleased
+## 2.0.1
+
+- Media keys (play / pause, next, previous, stop) now reach Listen while another app has the focus on Windows; when Listen is idle they still go to the app that is playing.
+- Play queue: a dropped track settles in its new place instead of sliding back first.
+
+## 2.0.0
 
 Listen 2: rewritten in Rust with a native UI, for **Windows, macOS and Linux**.
 
