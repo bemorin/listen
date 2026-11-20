@@ -21,45 +21,27 @@ pub struct TrackMeta {
     pub cover_from_folder: bool,
 }
 
-/// Title and subtitle shown for a file. Tags win; otherwise the Windows app's rule:
-/// "Artist - Title" file names split in two, else the folder name as subtitle.
+/// Title and subtitle (artist) shown for a file. The title is the title tag, else the file
+/// name ("Artist - Title" names are split; a leading track number is not an artist). The
+/// subtitle is the artist tag, else the artist part of the file name, else the album tag,
+/// else nothing: a folder name says nothing about the music.
 pub fn display_names(path: &Path, meta: Option<&TrackMeta>) -> (String, String) {
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_string();
-    let folder = path
-        .parent()
-        .and_then(|p| p.file_name())
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
-    let (mut title, mut subtitle) = match stem.find(" - ") {
-        // "03 - Song" is a track number, not an artist: keep the folder as subtitle.
-        Some(i)
-            if i > 0
-                && i + 3 < stem.len()
-                && stem[..i].trim().chars().all(|c| c.is_ascii_digit()) =>
-        {
-            (stem[i + 3..].trim().to_string(), folder.to_string())
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+    let (mut title, name_artist) = match stem.find(" - ") {
+        Some(i) if i > 0 && i + 3 < stem.len() => {
+            let left = stem[..i].trim();
+            let artist = (!left.chars().all(|c| c.is_ascii_digit())).then(|| left.to_string());
+            (stem[i + 3..].trim().to_string(), artist)
         }
-        Some(i) if i > 0 && i + 3 < stem.len() => (
-            stem[i + 3..].trim().to_string(),
-            stem[..i].trim().to_string(),
-        ),
-        _ => (stem.clone(), folder.to_string()),
+        _ => (stem.clone(), None),
     };
-    if let Some(m) = meta {
-        if let Some(t) = m.title.as_ref().filter(|t| !t.trim().is_empty()) {
-            title = t.trim().to_string();
-            if let Some(a) = m.artist.as_ref().filter(|a| !a.trim().is_empty()) {
-                subtitle = a.trim().to_string();
-            }
-        }
+    let tag = |f: fn(&TrackMeta) -> &Option<String>| {
+        meta.and_then(|m| f(m).as_deref()).map(str::trim).filter(|t| !t.is_empty()).map(str::to_string)
+    };
+    if let Some(t) = tag(|m| &m.title) {
+        title = t;
     }
-    if subtitle.is_empty() {
-        subtitle = extension_label(path);
-    }
+    let subtitle = tag(|m| &m.artist).or(name_artist).or_else(|| tag(|m| &m.album)).unwrap_or_default();
     (title, subtitle)
 }
 
@@ -309,16 +291,15 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn names_follow_the_windows_rule() {
+    fn names_prefer_tags_and_never_the_folder() {
         let p = PathBuf::from("/music/Album/Artist - Song.mp3");
         assert_eq!(display_names(&p, None), ("Song".into(), "Artist".into()));
         let p = PathBuf::from("/music/Album/03 - Song.flac");
-        assert_eq!(display_names(&p, None), ("Song".into(), "Album".into()));
+        assert_eq!(display_names(&p, None), ("Song".into(), "".into()));
         let p = PathBuf::from("/music/Music/★ Back Up.wav");
-        assert_eq!(
-            display_names(&p, None),
-            ("★ Back Up".into(), "Music".into())
-        );
+        assert_eq!(display_names(&p, None), ("★ Back Up".into(), "".into()));
+        let album = TrackMeta { album: Some("The Album".into()), ..Default::default() };
+        assert_eq!(display_names(&p, Some(&album)), ("★ Back Up".into(), "The Album".into()));
         let tagged = TrackMeta {
             title: Some("Real".into()),
             artist: Some("Band".into()),
@@ -352,4 +333,44 @@ mod tests {
         assert_eq!(format_time(Duration::from_secs(204)), "03:24");
         assert_eq!(format_time(Duration::from_secs(3725)), "01:02:05");
     }
+}
+
+/// The window's ambient wash for two glow colours: a small RGBA image (it is stretched to
+/// the window) with a glow from the top left and one from the bottom right, on transparent.
+/// Geometry matches the 500x410 window the design was drawn for.
+pub fn ambient_wash(a: [u8; 3], b: [u8; 3]) -> (u32, u32, Vec<u8>) {
+    const W: u32 = 125;
+    const H: u32 = 103;
+    let (ww, wh) = (500.0f32, 410.0f32);
+    // (centre x, centre y, radius at which the glow is gone, strength), window units.
+    let glows = [
+        (0.30 * ww, 0.15 * ww, 0.68 * 1.06 * ww, 1.0f32, a),
+        (0.90 * ww, wh - 0.05 * ww, 0.68 * 0.99 * ww, 0.9f32, b),
+    ];
+    let mut out = vec![0u8; (W * H * 4) as usize];
+    for y in 0..H {
+        for x in 0..W {
+            let px = (x as f32 + 0.5) / W as f32 * ww;
+            let py = (y as f32 + 0.5) / H as f32 * wh;
+            // Premultiplied "over" compositing of the two glows.
+            let (mut r, mut g, mut bl, mut al) = (0f32, 0f32, 0f32, 0f32);
+            for (cx, cy, radius, strength, c) in glows {
+                let d = ((px - cx).powi(2) + (py - cy).powi(2)).sqrt();
+                let t = (1.0 - d / radius).clamp(0.0, 1.0);
+                let ga = t * strength;
+                r = c[0] as f32 * ga + r * (1.0 - ga);
+                g = c[1] as f32 * ga + g * (1.0 - ga);
+                bl = c[2] as f32 * ga + bl * (1.0 - ga);
+                al = ga + al * (1.0 - ga);
+            }
+            let i = ((y * W + x) * 4) as usize;
+            if al > 0.0 {
+                out[i] = (r / al).round().min(255.0) as u8;
+                out[i + 1] = (g / al).round().min(255.0) as u8;
+                out[i + 2] = (bl / al).round().min(255.0) as u8;
+                out[i + 3] = (al * 255.0).round() as u8;
+            }
+        }
+    }
+    (W, H, out)
 }

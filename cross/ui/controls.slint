@@ -172,26 +172,20 @@ export component PlayButton inherits IconButton {
         opacity: root.playing ? 0 : 1;
         animate opacity, width { duration: T.medium; easing: M.spring; }
     }
-    // Pause
-    Rectangle {
-        width: root.inner * (root.playing ? 1 : 0.6);
-        height: self.width;
+    // Pause: both bars in one path covering the whole button, mirror-symmetric about its
+    // centre, so they always rasterise identically (separate rectangles at half-pixel
+    // positions came out unequal).
+    Path {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        fill: T.disc-glyph;
         opacity: root.playing ? 1 : 0;
-        animate opacity, width { duration: T.medium; easing: M.spring; }
-        Rectangle {
-            x: parent.width * 0.5 - 1.5px - self.width;
-            width: max(2.2px, parent.width * 0.17);
-            height: parent.height * 0.72;
-            border-radius: 1px;
-            background: T.disc-glyph;
-        }
-        Rectangle {
-            x: parent.width * 0.5 + 1.5px;
-            width: max(2.2px, parent.width * 0.17);
-            height: parent.height * 0.72;
-            border-radius: 1px;
-            background: T.disc-glyph;
-        }
+        animate opacity { duration: T.medium; easing: ease-out; }
+        commands: "M40.6,37.5 L44.9,37.5 Q46.6,37.5 46.6,39.2 L46.6,60.8 Q46.6,62.5 44.9,62.5 L40.6,62.5 Q38.9,62.5 38.9,60.8 L38.9,39.2 Q38.9,37.5 40.6,37.5 Z M55.1,37.5 L59.4,37.5 Q61.1,37.5 61.1,39.2 L61.1,60.8 Q61.1,62.5 59.4,62.5 L55.1,62.5 Q53.4,62.5 53.4,60.8 L53.4,39.2 Q53.4,37.5 55.1,37.5 Z";
     }
 }
 

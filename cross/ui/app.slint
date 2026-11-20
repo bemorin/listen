@@ -357,6 +357,13 @@ export component AppWindow inherits Window {
     // Two colours sampled from the artwork (top-left and bottom-right), for the ambient wash.
     in property <color> tint-a: T.ambient-warm;
     in property <color> tint-b: T.ambient-cool;
+    // The ambient wash (see below), the previous one while they cross-fade, and a flag the
+    // app raises for an instant when a new wash arrives.
+    in property <image> ambient;
+    in property <image> ambient-prev;
+    in property <bool> ambient-fresh;
+    // Test switch: 0 none, 1 wash only, 2 wash + grain (default).
+    in property <int> ambient-level: 2;
 
     // ----- Queue -----
     in property <[QueueItem]> queue;
@@ -400,6 +407,8 @@ export component AppWindow inherits Window {
     callback remove-index(int);
     callback clear-queue();
     callback move-item(int, int);
+    // Ctrl+A selects the whole queue; Remove, Delete or "-" then clear it.
+    in-out property <bool> select-all;
     in-out property <bool> show-remaining;
     callback start-drag();
 
@@ -432,6 +441,13 @@ export component AppWindow inherits Window {
     property <bool> swapping;
     property <string> next-title: root.has-track ? root.track-title : root.s-nothing;
     property <string> next-key: root.next-title + " | " + root.track-subtitle;
+    // The queue follows playback: on each track change it glides to centre the playing row.
+    changed current-index => { root.reveal-current(); }
+    changed queue-shown => { root.reveal-current(); }
+    function reveal-current() {
+        if (root.current-index < 0 || !root.queue-shown) { return; }
+        list.content-y = -clamp(root.current-index * 34px - (list.height - 32px) / 2, 0px, max(0px, list.content-height - list.height));
+    }
     changed next-key => {
         root.swapping = true;
         root.swap = 0;
@@ -466,21 +482,28 @@ export component AppWindow inherits Window {
     animate amb-a, amb-b { duration: 900ms; easing: ease-in-out; }
     property <float> amb-strength: root.has-artwork ? (root.playing ? 0.5 : 0.36) : 0.42;
     animate amb-strength { duration: 900ms; easing: ease-in-out; }
-    Rectangle {
-        x: -root.width * 0.45;
-        y: -root.width * 0.6;
-        width: root.width * 1.5;
-        height: self.width;
-        opacity: root.amb-strength;
-        background: @radial-gradient(circle, root.amb-a 0%, transparent 68%);
+    // The wash is a small image the app renders once per track (two soft glows) and the
+    // window stretches smoothly: far cheaper to draw than full-window radial gradients,
+    // which matters when a morph repaints the whole window on every step.
+    property <float> ambient-mix: root.ambient-fresh ? 0 : 1;
+    animate ambient-mix { duration: root.ambient-fresh ? 0ms : 900ms; easing: ease-in-out; }
+    Image {
+        width: root.width;
+        height: root.height;
+        source: root.ambient-prev;
+        image-fit: fill;
+        image-rendering: smooth;
+        opacity: root.amb-strength * (1 - root.ambient-mix);
+        visible: root.ambient-level >= 1 && self.opacity > 0.005;
     }
-    Rectangle {
-        x: root.width * 0.2;
-        y: root.height - root.width * 0.75;
-        width: root.width * 1.4;
-        height: self.width;
-        opacity: root.amb-strength * 0.9;
-        background: @radial-gradient(circle, root.amb-b 0%, transparent 68%);
+    Image {
+        width: root.width;
+        height: root.height;
+        source: root.ambient;
+        image-fit: fill;
+        image-rendering: smooth;
+        opacity: root.amb-strength * root.ambient-mix;
+        visible: root.ambient-level >= 1;
     }
     // A fine grain over the wash, so its very soft gradients never show steps.
     Image {
@@ -489,15 +512,26 @@ export component AppWindow inherits Window {
         source: @image-url("../assets/grain.png");
         horizontal-tiling: repeat;
         vertical-tiling: repeat;
+        // Skipped while the window morphs: every step repaints the whole window, and each
+        // frame must be ready within one display refresh.
+        visible: !root.morphing && root.ambient-level >= 2;
         opacity: 0.045;
     }
 
     fs := FocusScope {
         opacity: root.content-fade;
+        // Fully dissolved during a mode change: not drawn at all, so each morph step paints
+        // fast enough to be on screen before the window's new size is.
+        visible: root.content-fade > 0.001;
         init => { self.focus(); }
         key-pressed(e) => {
             if (e.modifiers.control || e.modifiers.meta) {
                 if (e.text == "o" || e.text == "O") { root.add-files(); return accept; }
+                if ((e.text == "a" || e.text == "A") && root.queue.length > 0) {
+                    if (!root.queue-open) { root.toggle-queue(); }
+                    root.select-all = true;
+                    return accept;
+                }
                 if (e.text == "m" || e.text == "M") { root.toggle-mini(); return accept; }
                 if (e.text == "t" || e.text == "T") { root.toggle-topmost(); return accept; }
                 if (e.text == "l" || e.text == "L") { root.toggle-queue(); return accept; }
@@ -510,7 +544,17 @@ export component AppWindow inherits Window {
             if (e.text == Key.RightArrow) { root.nudge(5); return accept; }
             if (e.text == Key.UpArrow) { root.set-volume(min(1, root.volume + 0.05)); return accept; }
             if (e.text == Key.DownArrow) { root.set-volume(max(0, root.volume - 0.05)); return accept; }
-            if (e.text == Key.Delete && root.queue-shown && root.selected-index >= 0) { root.remove-index(root.selected-index); return accept; }
+            if (e.text == "+" || e.text == "=") { root.add-files(); return accept; }
+            if ((e.text == Key.Delete || e.text == "-") && root.queue-shown) {
+                if (root.select-all) {
+                    root.select-all = false;
+                    root.clear-queue();
+                } else if (root.selected-index >= 0) {
+                    root.remove-index(root.selected-index);
+                }
+                return accept;
+            }
+            if (e.text == Key.Escape && root.select-all) { root.select-all = false; return accept; }
             if (e.text == Key.Return && root.queue-shown && root.selected-index >= 0) { root.play-index(root.selected-index); return accept; }
             if (e.text == Key.Escape && root.mini) { root.toggle-mini(); return accept; }
             reject
@@ -571,22 +615,22 @@ export component AppWindow inherits Window {
             Rectangle {
                 x: 44px;
                 y: (T.top-bar - self.height) / 2 + 1px;
-                width: 45.64px;
-                height: 14.28px;
+                width: 55.00px;
+                height: 16.80px;
                 opacity: root.hero-opacity;
                 Path {
                     width: parent.width;
                     height: parent.height;
                     viewbox-x: -1.4;
                     viewbox-y: -1.4;
-                    viewbox-width: 53.7;
+                    viewbox-width: 55.0;
                     viewbox-height: 16.8;
                     stroke: #F2F2F4;
-                    stroke-width: 2.12px;
+                    stroke-width: 1.95px;
                     stroke-line-cap: round;
                     stroke-line-join: round;
                     fill: transparent;
-                    commands: "M1.2,0.6 L1.2,14 M6.9,0.75 L6.9,0.95 M6.9,5 L6.9,14 M18.2,6.6 C17.5,5.5 16.4,5 15.1,5 C13.4,5 12.4,5.9 12.4,7.1 C12.4,9.8 18.6,8.6 18.6,11.4 C18.6,12.8 17.3,14 15.3,14 C13.8,14 12.6,13.4 11.8,12.2 M23.9,1.8 L23.9,11.6 C23.9,13.2 24.7,14 26.2,14 L26.9,14 M21.9,5.3 L26.7,5.3 M30.5,9.6 L38.4,9.6 C38.4,7 36.8,5 34.5,5 C32.1,5 30.4,7 30.4,9.5 C30.4,12 32.1,14 34.6,14 C36.2,14 37.4,13.3 38.1,12.1 M42.7,14 L42.7,5 M42.7,9.2 C42.7,6.6 44.4,5 46.4,5 C48.5,5 49.9,6.6 49.9,9.2 L49.9,14";
+                    commands: "M1.2,0.6 L1.2,14 M6.9,0.75 L6.9,0.95 M6.9,5 L6.9,14 M18,6.6 C17.3,5.5 16.2,5 14.9,5 C13.2,5 12.2,5.9 12.2,7.1 C12.2,9.8 18.4,8.6 18.4,11.4 C18.4,12.8 17.1,14 15.1,14 C13.6,14 12.4,13.4 11.6,12.2 M24.2,1.8 L24.2,11.6 C24.2,13.2 25,14 26.5,14 L27.2,14 M22.2,5.3 L27,5.3 M31.3,9.6 L39.2,9.6 C39.2,7 37.6,5 35.3,5 C32.9,5 31.2,7 31.2,9.5 C31.2,12 32.9,14 35.4,14 C37,14 38.2,13.3 38.9,12.1 M44,14 L44,5 M44,9.2 C44,6.6 45.7,5 47.7,5 C49.8,5 51.2,6.6 51.2,9.2 L51.2,14";
                 }
             }
             compact-title := VerticalLayout {
@@ -607,6 +651,8 @@ export component AppWindow inherits Window {
                 }
                 Text {
                     text: root.has-track ? root.shown-subtitle : root.s-add-hint;
+                    // No artist known: the title alone, centred in the bar.
+                    height: self.text == "" ? 0px : self.preferred-height;
                     opacity: root.swap;
                     color: T.muted;
                     font-size: 11px;
@@ -1005,8 +1051,15 @@ export component AppWindow inherits Window {
                             text: L.fr ? "Retirer" : "Remove";
                             icon: "M4.5,10 L15.5,10";
                             tip: L.fr ? "Retirer le titre sélectionné" : "Remove the selected track";
-                            enabled: root.selected-index >= 0 && root.selected-index < root.queue.length;
-                            clicked => { root.remove-index(root.selected-index); }
+                            enabled: root.select-all || (root.selected-index >= 0 && root.selected-index < root.queue.length);
+                            clicked => {
+                                if (root.select-all) {
+                                    root.select-all = false;
+                                    root.clear-queue();
+                                } else {
+                                    root.remove-index(root.selected-index);
+                                }
+                            }
                         }
                         PillButton {
                             y: (parent.height - self.height) / 2;
@@ -1029,6 +1082,8 @@ export component AppWindow inherits Window {
                             property <int> target: self.drag-from < 0 ? -1 : clamp(round((self.drag-from * 34px + self.drag-dy) / 34px), 0, root.queue.length - 1);
                             interactive: self.drag-from < 0;
                             width: parent.width - 12px;
+                            // Glides (wheel scrolling too) instead of jumping.
+                            animate content-y { duration: 320ms; easing: M.settle; }
                             x: 0;
                             content-height: max(self.height, root.queue.length * 34px);
                             for item[i] in root.queue: QueueRow {
@@ -1058,11 +1113,15 @@ export component AppWindow inherits Window {
                                 width: list.width;
                                 item: item;
                                 current: i == root.current-index;
-                                selected: i == root.selected-index;
+                                selected: root.select-all || i == root.selected-index;
                                 playing: root.playing;
                                 wave: root.wave;
                                 remove-tip: L.fr ? "Retirer" : "Remove";
-                                select => { root.selected-index = i; fs.focus(); }
+                                select => {
+                                    root.select-all = false;
+                                    root.selected-index = i;
+                                    fs.focus();
+                                }
                                 activate => { root.play-index(i); }
                                 remove => { root.remove-index(i); }
                             }

@@ -28,7 +28,7 @@ const QUEUE_REVEAL: Duration = Duration::from_millis(340);
 const FADE_OUT: f64 = 0.09;
 const MORPH_DELAY: f64 = 0.04;
 const FADE_IN: f64 = 0.17;
-const FADE_IN_AT: f64 = 0.5; // fraction of the morph when the new layout starts to appear
+const FADE_IN_AT: f64 = 0.82; // fraction of the morph when the new layout starts to appear: late, once the window is nearly at its new size, so growing steps stay cheap to paint
 
 pub fn is_french() -> bool {
     sys_locale::get_locale()
@@ -124,6 +124,9 @@ struct App {
     hovered_files: Vec<PathBuf>,
     started: bool,
     snapping: bool,
+    dpi_change_until: Option<Instant>,
+    last_morph_step: Instant,
+    ambient_colours: Option<([u8; 3], [u8; 3])>,
 }
 
 thread_local! {
@@ -197,6 +200,26 @@ impl App {
         }
     }
 
+    /// Cross-fades the window's ambient wash to one made from two glow colours.
+    fn set_ambient(&mut self, a: [u8; 3], b: [u8; 3]) {
+        if self.ambient_colours == Some((a, b)) {
+            return;
+        }
+        self.ambient_colours = Some((a, b));
+        let (w, h, rgba) = meta::ambient_wash(a, b);
+        let image = slint::Image::from_rgba8(slint::SharedPixelBuffer::clone_from_slice(&rgba, w, h));
+        let ui = self.ui();
+        ui.set_ambient_prev(ui.get_ambient());
+        ui.set_ambient(image);
+        ui.set_ambient_fresh(true);
+        slint::Timer::single_shot(Duration::from_millis(30), || with_app(|a| a.ui().set_ambient_fresh(false)));
+    }
+
+    /// The quiet warm/cool duotone of a track without artwork (theme.slint's ambient colours).
+    fn set_default_ambient(&mut self) {
+        self.set_ambient([0x4A, 0x2A, 0x1A], [0x18, 0x26, 0x38]);
+    }
+
     /// "7 tracks · 24 min" (the length once every duration is known).
     fn update_queue_summary(&self) {
         let n = self.state.queue.len();
@@ -236,6 +259,7 @@ impl App {
         match self.current_path().cloned() {
             None => {
                 ui.set_has_artwork(false);
+                self.set_default_ambient();
                 ui.set_has_track(false);
                 ui.set_track_title("".into());
                 ui.set_track_subtitle("".into());
@@ -690,10 +714,12 @@ impl App {
                         let [ga, gb] = a.glow;
                         ui.set_tint_a(slint::Color::from_rgb_u8(ga[0], ga[1], ga[2]));
                         ui.set_tint_b(slint::Color::from_rgb_u8(gb[0], gb[1], gb[2]));
+                        self.set_ambient(ga, gb);
                         ui.set_has_artwork(true);
                         cover_url = self.write_cover(a);
                     } else {
                         ui.set_has_artwork(false);
+                        self.set_default_ambient();
                     }
                     if let (Some(url), Some(path)) = (cover_url, self.current_path().cloned()) {
                         let (title, subtitle) = meta::display_names(&path, self.current_meta.as_ref());
@@ -943,18 +969,29 @@ impl App {
             return;
         }
         self.step_morph();
-        let weak = self.ui.clone();
-        self.morph_timer.start(
-            slint::TimerMode::Repeated,
-            Duration::from_millis(7),
-            move || {
-                let _ = &weak;
-                with_app(|app| app.step_morph());
-            },
-        );
+        // On Windows, morph steps follow the frames: each one comes right after the previous
+        // size has been painted (see `on_frame_presented`). The timer only keeps the morph
+        // going if no frame comes (and drives it on other platforms).
+        let fallback = if cfg!(windows) { Duration::from_millis(40) } else { Duration::from_millis(7) };
+        self.morph_timer.start(slint::TimerMode::Repeated, fallback, || {
+            with_app(|app| {
+                if !cfg!(windows) || app.last_morph_step.elapsed() >= Duration::from_millis(35) {
+                    app.step_morph();
+                }
+            });
+        });
+    }
+
+    /// A frame was just presented (Windows): take the next morph step.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    fn on_frame_presented(&mut self) {
+        if self.morph.is_some() {
+            self.step_morph();
+        }
     }
 
     fn step_morph(&mut self) {
+        self.last_morph_step = Instant::now();
         let Some(m) = &self.morph else { return };
         let elapsed = m.start.elapsed().as_secs_f64();
         let dur = m.duration.as_secs_f64();
@@ -1046,6 +1083,15 @@ impl App {
 
     /// Window resized (by the user, the OS or a morph).
     fn on_resized(&mut self, w: f64, h: f64) {
+        // Crossing to a monitor with another scale makes the OS resize the window; that is
+        // not the user resizing, so no constraints, snapping or mode change may follow.
+        let dpi_change = self.dpi_change_until.map(|t| Instant::now() < t).unwrap_or(false);
+        if dpi_change {
+            self.last_size = (w, h);
+            self.resize_start = None;
+            self.resize_settle.stop();
+            return;
+        }
         if self.morph.is_some() || !self.started {
             self.last_size = (w, h);
             return;
@@ -1279,6 +1325,10 @@ fn main() -> Result<(), slint::PlatformError> {
         .select()?;
 
     let ui = AppWindow::new()?;
+    #[cfg(any(debug_assertions, feature = "test-hooks"))]
+    if let Some(level) = std::env::var("LISTEN_AMBIENT").ok().and_then(|v| v.parse().ok()) {
+        ui.set_ambient_level(level);
+    }
     ui.window()
         .set_size(slint::LogicalSize::new(start_w as f32, start_h as f32));
     let fr = is_french();
@@ -1340,6 +1390,9 @@ fn main() -> Result<(), slint::PlatformError> {
         hovered_files: Vec::new(),
         started: false,
         snapping: false,
+        dpi_change_until: None,
+        last_morph_step: Instant::now(),
+        ambient_colours: None,
     }));
     APP.with(|a| *a.borrow_mut() = Some(app.clone()));
 
@@ -1350,6 +1403,7 @@ fn main() -> Result<(), slint::PlatformError> {
             a.height_before_queue = Some(base_h);
         }
         a.refresh_queue();
+        a.set_default_ambient();
         if let Some((files, mode)) = launch_from_args() {
             a.apply_launch(files, mode, true);
         } else {
@@ -1430,6 +1484,8 @@ fn main() -> Result<(), slint::PlatformError> {
             return;
         };
         platform::style_window(&winit_window);
+        #[cfg(windows)]
+        platform::erase::set_after_paint(|| with_app(|a| a.on_frame_presented()));
         drop(winit_window);
         ui.window().on_winit_window_event(|_, event| {
             use winit::event::WindowEvent;
@@ -1455,6 +1511,11 @@ fn main() -> Result<(), slint::PlatformError> {
                             a.apply_launch(files, Launch::Enqueue, idle);
                         })
                     });
+                }),
+                WindowEvent::ScaleFactorChanged { .. } => with_app(|a| {
+                    a.dpi_change_until = Some(Instant::now() + Duration::from_millis(500));
+                    a.resize_start = None;
+                    a.resize_settle.stop();
                 }),
                 WindowEvent::Resized(size) => {
                     let size = *size;

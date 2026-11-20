@@ -41,7 +41,7 @@ Both apps ran on the same machine and were measured the same way. Memory is the 
 | Binary | 130.5 KB (needs .NET Framework, which ships with Windows) | 8.7 MB, self-contained (no runtime) |
 | Memory at idle | 49.8 MB (with a saved queue loaded) | **4.7 MB** (empty queue) |
 | Memory while playing | 38.9 MB | **5.3 MB** (full), **3.8 MB** (mini), **6.3 MB** (queue open) |
-| CPU while playing | 2.5 % of one core (progress updated 4× a second) | **2.2 %** (full), **2.4 %** (mini), **5.5 %** (queue open, animated bars); the progress bar glides continuously |
+| CPU while playing | 2.5 % of one core (progress updated 4× a second) | **1.8 %** (full), **1.4 %** (mini), **5.1 %** (queue open, animated bars); the progress bar glides continuously |
 | CPU while paused | – | ~0.3 % of one core; the audio device is released after 20 s |
 
 The binary is larger because nothing is borrowed from the OS. The UI toolkit, font shaping, the decoders and image decoding are all inside the executable.
@@ -75,7 +75,12 @@ cargo build --release --features test-hooks   # release build that also honours 
 LISTEN_DATA_DIR=/tmp/listen cargo run -- song.flac other.mp3
 ```
 
-`LISTEN_DATA_DIR` keeps test state away from your real settings. In debug builds, or with `--features test-hooks`, `LISTEN_SILENT=1` mutes the output and `LISTEN_DEBUG_CMDS=<file>` drives the app from a command file (`mini`, `queue`, `play`, `next`, `prev`, `seek 0.5`, `size 500 300`), without synthetic input.
+`LISTEN_DATA_DIR` keeps test state away from your real settings. In debug builds, or with `--features test-hooks`:
+
+- `LISTEN_SILENT=1` mutes the output.
+- `LISTEN_DEBUG_CMDS=<file>` drives the app from a command file (`mini`, `queue`, `play`, `next`, `prev`, `repeat`, `topmost`, `seek 0.5`, `size 500 300`), without synthetic input.
+- `LISTEN_PAINT_LOG=<file>` logs the duration and size of every frame (Windows).
+- `LISTEN_AMBIENT=0|1|2` turns the ambient wash and the grain off for measurements.
 
 GitHub Actions (`.github/workflows/cross.yml`) builds and tests Windows x64, macOS arm64, macOS x64 and Linux x64. It uploads one artifact per platform.
 
@@ -94,7 +99,10 @@ The command line is the same as the Windows app's: `listen a.mp3 b.flac` replace
 | `Ctrl+T` | Always on top |
 | `Ctrl+R` | Cycle repeat mode |
 | `Ctrl+Q` / `Ctrl+W` | Quit |
-| `Delete` / `Enter` | Remove / play the selected queue item |
+| `+` | Add audio files |
+| `-` / `Delete` | Remove the selected queue item |
+| `Ctrl+A` | Select the whole queue (then `-`, `Delete` or Remove clears it; `Esc` cancels) |
+| `Enter` | Play the selected queue item |
 | `Esc` | Leave the mini player |
 
 On macOS, `Ctrl` is `⌘`.
@@ -124,7 +132,7 @@ The native window bounds animate on the same critically damped spring as the Win
 - **The queue** opens as a drawer: the player stays still while the panel is revealed below it.
 - **Manual resizes** play the adaptive layout continuously, because every layout is a function of the height. Released between two layouts, the window settles on the nearer one.
 
-Frame-by-frame captures on Windows showed no black or stretched frames.
+On Windows the steps follow the frames. Each step comes right after the previous size has been painted (the window's `WM_PAINT`) and waits for the compositor (`DwmFlush`), so every new size gets a whole display refresh to be drawn. During a mode change the dissolved content is not drawn at all, and the new layout only appears once the window is nearly at its final size, so the growing steps stay cheap to paint. One residual remains: from a mini player at its minimum width to the full player, a strip of a few pixels can still show for a frame or two at the growing edge. Painting the whole enlarged window takes the software renderer longer than one refresh there.
 
 On macOS and Linux, winit moves and resizes in two calls, so a morph that grows upward near the bottom of the screen may wobble by a pixel. On Wayland, windows cannot position themselves, so they grow from their top-left corner.
 
@@ -132,9 +140,10 @@ On macOS and Linux, winit moves and resizes in two calls, so a morph that grows 
 
 Apple-grade polish, without new weight:
 
+- **Ambient wash, cheaply.** The two artwork glows are rendered once per track into a small image that the window stretches smoothly. Full-window radial gradients cost a lot to draw with the software renderer, and a window morph repaints everything on every step.
 - **Light and glass.** The interface is neutral: white glyphs, a white progress bar, and translucent "glass" surfaces with a faint highlight edge (queue drawer, menu, tooltips, pills). The colour comes from the music. Two colours sampled from the artwork, made vivid enough to read as light, bleed softly into the window and cross-fade on track change. Without artwork, the window uses a quiet warm/cool duotone. A fine grain keeps these very soft gradients from banding.
-- **New mark.** The orange note becomes a silver disc with a sound wave carved through it; the wave's central peaks draw an M. The icon has no tile and a transparent background, like other taskbar and dock icons. Below 32 px, the wave has fewer oscillations and a thicker line, so it stays legible. A faint edge keeps the disc defined on light taskbars. The same disc is the title-bar logo. It follows playback: the wave shows while music plays and flattens to a straight line, edge to edge, while paused. The change is a single spring per state change, with no looping animation. Next to it, the wordmark "listen" is drawn as bold geometric strokes with round terminals. It uses no font, so it looks the same on every OS, and it is sized well below the mark. `assets/make-icon.ps1` renders the PNGs and `assets/make-ico.py` packs `listen.ico`. The palette stays black, white and silver: the queue's now-playing bars are a silver gradient. The Windows app's icon in `../build` is unchanged.
-- **Play disc.** Play and pause sit on a light disc with a dark glyph, like a system Now Playing control. It brightens under the pointer and dips when pressed. All other buttons light up as soft circles. Toggles that are on (always on top, queue, repeat) show a glass disc behind a full-white glyph. Repeat is the same 32 px size as the queue and menu buttons.
+- **New mark.** The orange note becomes a silver disc with a sound wave carved through it; the wave's central peaks draw an M. The icon has no tile and a transparent background, like other taskbar and dock icons. Below 32 px, the wave has fewer oscillations and a thicker line, so it stays legible. A faint edge keeps the disc defined on light taskbars. The same disc is the title-bar logo. It follows playback: the wave shows while music plays and flattens to a straight line, edge to edge, while paused. The change is a single spring per state change, with no looping animation. Next to it, the wordmark "listen" is drawn as bold geometric strokes with round terminals. It uses no font, so it looks the same on every OS, and it is lighter than bold, with open spacing, and sized below the mark. `assets/make-icon.ps1` renders the PNGs and `assets/make-ico.py` packs `listen.ico`. The palette stays black, white and silver: the queue's now-playing bars are a silver gradient. The Windows app's icon in `../build` is unchanged.
+- **Play disc.** Play and pause sit on a light disc with a dark glyph, like a system Now Playing control. It brightens under the pointer and dips when pressed. All other buttons light up as soft circles. Toggle glyphs (always on top, queue, repeat) stay white like every other button; when on, a glass disc sits behind them. Repeat is the same 32 px size as the queue and menu buttons.
 
 - **Artwork.** Embedded cover art is read from MP3, FLAC and M4A tags, or from `cover.jpg` / `folder.jpg` next to the file. It sits on a soft halo tinted with the artwork's own colour, and rests 10 % smaller while paused, with a spring.
 - **Transport.** The play and pause glyphs cross-fade with a slight scale. Skip glyphs nudge in their direction when pressed. Hover and press states fade in about 120 ms.
@@ -142,7 +151,9 @@ Apple-grade polish, without new weight:
 - **Track changes.** The title and subtitle cross-fade with a slight rise. The artwork dims through the change, and the new cover fades in. Tags are read before the artwork is decoded, so the title is final before the fade ends.
 - **Volume.** The icon reflects the level (muted, low, high). A bubble shows the level while you adjust it. The mouse wheel works over the volume slider, and `↑`/`↓` change it. The slider uses a perceptual curve, so it sounds even across its travel.
 - **Queue.** The header reads "Play queue · 7 tracks · 24 min", and Add, Remove and Clear are capsules with icons. Titles come from tags, and durations are computed in the background (exactly, even for VBR MP3s without a header). Drag a row to reorder: it lifts with a shadow and follows the pointer, and the rows it passes slide out of its way. Bars bounce beside the playing item. Hovering a row reveals a remove button. Remove and Clear are disabled when they would do nothing.
-- **Names.** "03 - Song.flac" is no longer shown with "03" as the artist; tags win when present.
+- **Names.** Under the title comes the artist: the artist tag, else the "Artist - " part of the file name, else the album. Otherwise nothing; a folder name says nothing about the music. "03 - Song.flac" is no longer shown with "03" as the artist.
+- **The queue follows playback.** When the track changes with the queue open, the list glides to centre the playing row. Wheel scrolling glides too.
+- **Monitors with different scales.** Moving the window to a screen with another scale (150 % and 100 %, say) resizes it. Listen no longer mistakes that for the user resizing (no constraints, snapping or mode change mid-drag).
 - **Resting heights.** Released between two layouts after a resize, the window settles on the nearer one (mini, compact, title only, artwork), so it never rests on a half-faded state.
 - **Menu.** The "more" menu shows keyboard shortcuts. Its rows compress to fit a short window.
 - **Tooltips** use one shared, delayed tooltip with a fade. They flip below the control when there is no room above.

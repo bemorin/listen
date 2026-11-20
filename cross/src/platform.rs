@@ -55,6 +55,9 @@ pub fn set_bounds(w: &Window, r: Rect) {
     if let Some(hwnd) = hwnd(w) {
         use windows_sys::Win32::UI::WindowsAndMessaging::*;
         unsafe {
+            // Land the resize at the start of a compositor frame, so the frame that paints the
+            // new size is ready before the screen shows it.
+            windows_sys::Win32::Graphics::Dwm::DwmFlush();
             SetWindowPos(
                 hwnd as _,
                 std::ptr::null_mut(),
@@ -292,14 +295,24 @@ mod tests {
 }
 
 #[cfg(windows)]
-mod erase {
+pub mod erase {
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
     use windows_sys::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject, FillRect, GetDC, GetPixel, ReleaseDC, HDC};
     use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetClassLongPtrW, GetClientRect, SetClassLongPtrW, CS_HREDRAW, CS_VREDRAW, GCL_STYLE, WM_ERASEBKGND,
-        WM_NCDESTROY, WM_SIZE,
+        WM_NCDESTROY, WM_PAINT, WM_SIZE,
     };
+
+    thread_local! {
+        static AFTER_PAINT: std::cell::Cell<Option<fn()>> = const { std::cell::Cell::new(None) };
+    }
+
+    /// Called right after each frame has been drawn and presented (winit renders inside
+    /// WM_PAINT). Window morphs step from here, so every resize gets painted before the next.
+    pub fn set_after_paint(callback: fn()) {
+        AFTER_PAINT.with(|c| c.set(Some(callback)));
+    }
 
     /// The app's background (#141414), when the window's own edge cannot be sampled.
     const BACKGROUND: u32 = 0x0014_1414;
@@ -360,6 +373,24 @@ mod erase {
                 }
                 state.width = w;
                 state.height = h;
+            }
+            WM_PAINT => {
+                let started = std::time::Instant::now();
+                let result = DefSubclassProc(hwnd, msg, wparam, lparam);
+                #[cfg(any(debug_assertions, feature = "test-hooks"))]
+                if let Some(log) = std::env::var_os("LISTEN_PAINT_LOG") {
+                    use std::io::Write;
+                    let mut rc: RECT = std::mem::zeroed();
+                    GetClientRect(hwnd, &mut rc);
+                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log) {
+                        let _ = writeln!(f, "{:.2}ms {}x{}", started.elapsed().as_secs_f64() * 1000.0, rc.right, rc.bottom);
+                    }
+                }
+                let _ = started;
+                if let Some(callback) = AFTER_PAINT.with(|c| c.get()) {
+                    callback();
+                }
+                return result;
             }
             WM_NCDESTROY => {
                 drop(Box::from_raw(data as *mut State));
