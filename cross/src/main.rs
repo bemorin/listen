@@ -1681,6 +1681,39 @@ fn main() -> Result<(), slint::PlatformError> {
                         a.ui().set_topmost(a.state.always_on_top);
                     }
                     "seek" => a.seek_fraction(args.first().copied().unwrap_or(0.0) as f32),
+                    // A resize as a hand would do it: the layout adapts live (no dissolve),
+                    // then the window takes the mode it lands in.
+                    "resize" if args.len() == 3 => {
+                        let s = a.scale();
+                        if let Some(b) = a.bounds() {
+                            a.resize_start = Some(a.last_size);
+                            a.snapping = true;
+                            let to = Rect { w: args[0] * s, h: args[1] * s, ..b };
+                            a.start_morph(b, to, Duration::from_millis(args[2] as u64), MorphKind::Mode);
+                        }
+                    }
+                    // Drag queue row `from` to row `to` over `ms`, then drop it.
+                    "drag" if args.len() == 3 => {
+                        let (from, to, ms) = (args[0] as i32, args[1] as i32, args[2].max(1.0));
+                        let started = Instant::now();
+                        let timer = Rc::new(slint::Timer::default());
+                        let keep = timer.clone();
+                        timer.start(slint::TimerMode::Repeated, Duration::from_millis(8), move || {
+                            let t = (started.elapsed().as_secs_f64() * 1000.0 / ms).min(1.0);
+                            let eased = ease(t) as f32;
+                            with_app(|a| {
+                                let ui = a.ui();
+                                if t < 1.0 {
+                                    ui.invoke_demo_drag(from, (to - from) as f32 * 34.0 * eased);
+                                } else {
+                                    ui.invoke_demo_drop();
+                                }
+                            });
+                            if t >= 1.0 {
+                                keep.stop();
+                            }
+                        });
+                    }
                     "size" if args.len() == 2 => {
                         let s = a.scale();
                         if let Some(b) = a.bounds() {

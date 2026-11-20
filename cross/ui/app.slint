@@ -449,6 +449,39 @@ export component AppWindow inherits Window {
     // The queue follows playback: on each track change it glides to centre the playing row.
     changed current-index => { root.reveal-current(); }
     changed queue-shown => { root.reveal-current(); }
+    // Test hooks (demo recordings): lift queue row `from` by `dy`, then drop it.
+    public function demo-drag(from: int, dy: length) {
+        list.drag-from = from;
+        list.drag-dy = dy;
+    }
+    public function demo-drop() { root.begin-drop(); }
+    function begin-drop() {
+        if (list.drag-from < 0 || list.dropping) { return; }
+        list.drop-target = list.target;
+        list.dropping = true;
+        list.drag-dy = (list.drop-target - list.drag-from) * 34px;
+    }
+    // The lifted row has reached its slot: reorder, without any row animating, so the rows
+    // on screen simply take their new content in place.
+    Timer {
+        interval: 160ms;
+        running: list.dropping;
+        triggered => {
+            list.settling = true;
+            list.dropping = false;
+            if (list.drop-target >= 0 && list.drop-target != list.drag-from) {
+                root.move-item(list.drag-from, list.drop-target);
+            }
+            list.drag-from = -1;
+            list.drag-dy = 0;
+            list.drop-target = -1;
+        }
+    }
+    Timer {
+        interval: 40ms;
+        running: list.settling;
+        triggered => { list.settling = false; }
+    }
     function reveal-current() {
         if (root.current-index < 0 || !root.queue-shown) { return; }
         list.content-y = -clamp(root.current-index * 34px - (list.height - 32px) / 2, 0px, max(0px, list.content-height - list.height));
@@ -1072,6 +1105,12 @@ export component AppWindow inherits Window {
                         list := Flickable {
                             property <int> drag-from: -1;
                             property <length> drag-dy;
+                            // Dropping: the lifted row first settles into its slot, then the
+                            // queue is reordered with no row animating (see begin-drop).
+                            property <bool> dropping;
+                            property <bool> settling;
+                            property <int> drop-target: -1;
+                            animate drag-dy { duration: self.dropping ? 150ms : 0ms; easing: M.settle; }
                             property <int> target: self.drag-from < 0 ? -1 : clamp(round((self.drag-from * 34px + self.drag-dy) / 34px), 0, root.queue.length - 1);
                             interactive: self.drag-from < 0;
                             width: parent.width - 12px;
@@ -1088,7 +1127,7 @@ export component AppWindow inherits Window {
                                     : list.drag-from < self.target && i > list.drag-from && i <= self.target ? i - 1
                                     : list.drag-from > self.target && i >= self.target && i < list.drag-from ? i + 1
                                     : i) * 34px;
-                                animate rest { duration: 180ms; easing: M.settle; }
+                                animate rest { duration: list.settling ? 0ms : 180ms; easing: M.settle; }
                                 y: i == list.drag-from ? i * 34px + list.drag-dy : self.rest;
                                 z: i == list.drag-from ? 1 : 0;
                                 lifted: i == list.drag-from;
@@ -1096,13 +1135,7 @@ export component AppWindow inherits Window {
                                     list.drag-from = i;
                                     list.drag-dy = dy;
                                 }
-                                drag-end => {
-                                    if (list.target != list.drag-from) {
-                                        root.move-item(list.drag-from, list.target);
-                                    }
-                                    list.drag-from = -1;
-                                    list.drag-dy = 0;
-                                }
+                                drag-end => { root.begin-drop(); }
                                 width: list.width;
                                 item: item;
                                 current: i == root.current-index;
