@@ -3,7 +3,7 @@
 // shrinks and fades, the centred title gives way to the title-bar title, then the mini player.
 
 import { T, M, L, Tip } from "theme.slint";
-import { Glyph, IconButton, GlyphButton, SkipButton, PlayButton, RepeatButton, DotsButton, TextButton, Slider } from "controls.slint";
+import { Glyph, IconButton, GlyphButton, SkipButton, PlayButton, RepeatButton, DotsButton, PillButton, Slider } from "controls.slint";
 
 export { T, L }
 
@@ -36,8 +36,8 @@ component AddHint inherits Rectangle {
     height: root.interactive ? 30px : 18px;
     border-radius: 10px;
     border-width: 1px;
-    border-color: ta.has-hover && root.interactive ? #343434 : transparent;
-    background: ta.has-hover && root.interactive ? (ta.pressed ? T.hover : T.elevated) : transparent;
+    border-color: ta.has-hover && root.interactive ? T.hairline : transparent;
+    background: ta.has-hover && root.interactive ? (ta.pressed ? T.glass-pressed : T.glass-hover) : transparent;
     animate background, border-color { duration: T.quick; }
     row := HorizontalLayout {
         alignment: center;
@@ -47,9 +47,9 @@ component AddHint inherits Rectangle {
             width: 19px;
             height: 19px;
             border-radius: 6px;
-            background: ta.has-hover ? T.hover : #232323;
+            background: ta.has-hover ? T.glass-hover : T.glass-raised;
             border-width: 1px;
-            border-color: ta.has-hover ? #454545 : #343434;
+            border-color: ta.has-hover ? T.hairline : T.hairline-soft;
             animate background, border-color { duration: T.quick; }
             Glyph {
                 width: 9px;
@@ -88,7 +88,7 @@ component DropOverlay inherits Rectangle {
     background: T.drop-overlay;
     border-radius: root.compact ? 10px : 14px;
     border-width: 1px;
-    border-color: T.accent;
+    border-color: T.drop-badge-border;
     opacity: root.active ? 1 : 0;
     visible: self.opacity > 0.01;
     animate opacity { duration: T.medium; easing: ease-out; }
@@ -113,7 +113,7 @@ component DropOverlay inherits Rectangle {
                     bw: 12;
                     bh: 12;
                     thickness: 1.7px;
-                    color: T.accent;
+                    color: T.text;
                     commands: "M10,4 L10,16 M4,10 L16,10";
                 }
             }
@@ -179,7 +179,7 @@ component NowPlaying inherits Rectangle {
         x: i * 4px;
         width: 2.4px;
         border-radius: 1px;
-        background: T.accent;
+        background: @linear-gradient(0deg, T.sig-c 0%, T.sig-a 100%);
         height: root.height * clamp(self.level, 0.18, 1);
         y: root.height - self.height;
     }
@@ -200,8 +200,10 @@ component QueueRow inherits Rectangle {
     callback drag-move(length);
     callback drag-end();
     height: 32px;
-    border-radius: 7px;
-    background: root.lifted ? #2E2E2E : root.selected ? T.list-selected : ta.has-hover ? T.list-hover : transparent;
+    border-radius: 8px;
+    background: root.lifted ? #2A2A2AF0 : root.selected ? T.glass-raised : ta.has-hover ? T.glass : transparent;
+    border-width: root.lifted ? 1px : 0px;
+    border-color: T.hairline;
     animate background { duration: T.quick; }
     drop-shadow-blur: root.lifted ? 12px : 0px;
     drop-shadow-offset-y: root.lifted ? 4px : 0px;
@@ -263,7 +265,6 @@ component QueueRow inherits Rectangle {
     remove := GlyphButton {
         x: parent.width - self.width - 4px;
         size: 24px;
-        radius: 7px;
         glyph: 9px;
         bx: 6;
         by: 6;
@@ -290,7 +291,7 @@ component MenuRow inherits Rectangle {
     in property <bool> active;
     callback activated;
     border-radius: 8px;
-    background: ta.pressed ? T.menu-pressed : ta.has-hover ? T.menu-hover : transparent;
+    background: ta.pressed ? T.glass-pressed : ta.has-hover ? T.glass-hover : transparent;
     animate background { duration: 90ms; }
     Glyph {
         x: 11px;
@@ -353,12 +354,17 @@ export component AppWindow inherits Window {
     in property <image> artwork;
     in property <bool> has-artwork;
     in property <color> tint: #00000000;
+    // Two colours sampled from the artwork (top-left and bottom-right), for the ambient wash.
+    in property <color> tint-a: T.ambient-warm;
+    in property <color> tint-b: T.ambient-cool;
 
     // ----- Queue -----
     in property <[QueueItem]> queue;
     in property <int> current-index: -1;
     in-out property <int> selected-index: -1;
     in property <bool> queue-open;
+    // "7 tracks · 24 min", written by the app.
+    in property <string> queue-summary;
     // Height given to the queue drawer; the app animates it with the window.
     in property <length> queue-extra;
 
@@ -453,6 +459,39 @@ export component AppWindow inherits Window {
     property <string> s-repeat: root.repeat-mode == 1 ? (L.fr ? "Répéter la file d’attente" : "Repeat play queue") : root.repeat-mode == 2 ? (L.fr ? "Répéter ce titre" : "Repeat this track") : (L.fr ? "Répétition désactivée" : "Repeat off");
 
 
+    // ---- Ambient wash: the artwork's colours bleed softly into the window, like light
+    // through frosted glass. A quiet warm/cool duotone when there is no artwork.
+    property <color> amb-a: root.has-artwork ? root.tint-a : T.ambient-warm;
+    property <color> amb-b: root.has-artwork ? root.tint-b : T.ambient-cool;
+    animate amb-a, amb-b { duration: 900ms; easing: ease-in-out; }
+    property <float> amb-strength: root.has-artwork ? (root.playing ? 0.5 : 0.36) : 0.42;
+    animate amb-strength { duration: 900ms; easing: ease-in-out; }
+    Rectangle {
+        x: -root.width * 0.45;
+        y: -root.width * 0.6;
+        width: root.width * 1.5;
+        height: self.width;
+        opacity: root.amb-strength;
+        background: @radial-gradient(circle, root.amb-a 0%, transparent 68%);
+    }
+    Rectangle {
+        x: root.width * 0.2;
+        y: root.height - root.width * 0.75;
+        width: root.width * 1.4;
+        height: self.width;
+        opacity: root.amb-strength * 0.9;
+        background: @radial-gradient(circle, root.amb-b 0%, transparent 68%);
+    }
+    // A fine grain over the wash, so its very soft gradients never show steps.
+    Image {
+        width: root.width;
+        height: root.height;
+        source: @image-url("../assets/grain.png");
+        horizontal-tiling: repeat;
+        vertical-tiling: repeat;
+        opacity: 0.045;
+    }
+
     fs := FocusScope {
         opacity: root.content-fade;
         init => { self.focus(); }
@@ -498,15 +537,18 @@ export component AppWindow inherits Window {
                 width: 28px;
                 height: 28px;
                 border-radius: 9px;
-                background: T.elevated;
+                background: @linear-gradient(160deg, #FFFFFF18 0%, #FFFFFF06 100%);
                 border-width: 1px;
-                border-color: T.border;
+                border-color: T.hairline;
                 opacity: root.hero-opacity;
-                Text {
-                    text: "♪";
-                    color: T.accent;
-                    font-size: 17px;
-                    font-weight: 600;
+                // The mark: a short waveform in the signature gradient.
+                for h[i] in [0.38, 0.72, 1.0, 0.6, 0.34]: Rectangle {
+                    x: 6.5px + i * 3.2px;
+                    y: (parent.height - self.height) / 2;
+                    width: 2px;
+                    height: 13px * h;
+                    border-radius: 1px;
+                    background: @linear-gradient(135deg, T.sig-a 0%, T.sig-b 50%, T.sig-c 100%);
                 }
             }
             Text {
@@ -557,7 +599,8 @@ export component AppWindow inherits Window {
                     bw: 12;
                     bh: 12;
                     glyph: 15px;
-                    ink: root.topmost ? T.accent : T.text;
+                    ink: root.topmost ? T.toggle-on : T.toggle-off;
+                    active: root.topmost;
                     clicked => { root.toggle-topmost(); }
                 }
                 GlyphButton {
@@ -613,9 +656,9 @@ export component AppWindow inherits Window {
                     width: hero.art-base * 2.3;
                     height: hero.art-base * 1.7;
                     y: (hero.art-room - self.height) / 2;
-                    opacity: root.art-opacity * (root.has-artwork ? (root.playing ? 0.55 : 0.32) : 0);
+                    opacity: root.art-opacity * (root.has-artwork ? (root.playing ? 0.7 : 0.4) : 0.25);
                     animate opacity { duration: 600ms; easing: ease-in-out; }
-                    background: @radial-gradient(circle, root.tint 0%, transparent 62%);
+                    background: @radial-gradient(circle, root.amb-a 0%, transparent 62%);
                 }
                 art := Rectangle {
                     width: hero.art-base * hero.rest-scale;
@@ -624,12 +667,12 @@ export component AppWindow inherits Window {
                     visible: root.art-opacity > 0 && self.width > 4px;
                     opacity: root.art-opacity * (0.4 + 0.6 * root.swap);
                     border-radius: 20px * self.width / T.artwork;
-                    background: T.elevated;
+                    background: @linear-gradient(155deg, #FFFFFF17 0%, #FFFFFF07 55%, #FFFFFF03 100%);
                     border-width: root.has-artwork ? 0px : 1px;
-                    border-color: T.border;
-                    drop-shadow-blur: root.has-artwork ? 18px * self.width / T.artwork : 0px;
-                    drop-shadow-offset-y: root.has-artwork ? 6px * self.width / T.artwork : 0px;
-                    drop-shadow-color: #00000070;
+                    border-color: T.hairline;
+                    drop-shadow-blur: 22px * self.width / T.artwork;
+                    drop-shadow-offset-y: 8px * self.width / T.artwork;
+                    drop-shadow-color: root.has-artwork ? #00000080 : #00000040;
                     clip: true;
                     Text {
                         opacity: root.has-artwork ? 0 : 1;
@@ -749,9 +792,9 @@ export component AppWindow inherits Window {
                     width: tip-time.preferred-width + 14px;
                     height: 20px;
                     border-radius: 6px;
-                    background: T.tooltip;
+                    background: #1E1E1EF0;
                     border-width: 1px;
-                    border-color: T.strong-border;
+                    border-color: T.hairline;
                     opacity: self.on ? 1 : 0;
                     animate opacity { duration: T.quick; }
                     tip-time := Text {
@@ -793,6 +836,7 @@ export component AppWindow inherits Window {
                     height: 24px;
                     visible: controls.show-volume-slider;
                     wheel: true;
+                    fill: #DADADA;
                     value: root.volume;
                     scrub(v) => { root.set-volume(v); }
                     commit(v) => { root.set-volume(v); }
@@ -805,9 +849,9 @@ export component AppWindow inherits Window {
                     width: vol-text.preferred-width + 14px;
                     height: 20px;
                     border-radius: 6px;
-                    background: T.tooltip;
+                    background: #1E1E1EF0;
                     border-width: 1px;
-                    border-color: T.strong-border;
+                    border-color: T.hairline;
                     opacity: self.on ? 1 : 0;
                     animate opacity { duration: T.quick; }
                     vol-text := Text {
@@ -829,14 +873,12 @@ export component AppWindow inherits Window {
                 SkipButton {
                     x: controls.centre - 26px - 6px - self.width;
                     size: 42px;
-                    radius: 10px;
                     tip: L.fr ? "Précédent" : "Previous";
                     clicked => { root.previous(); }
                 }
                 PlayButton {
                     x: controls.centre - 26px;
                     size: 52px;
-                    radius: 13px;
                     glyph: 19px;
                     playing: root.playing;
                     tip: L.fr ? "Lecture / pause" : "Play / pause";
@@ -845,7 +887,6 @@ export component AppWindow inherits Window {
                 SkipButton {
                     x: controls.centre + 26px + 6px;
                     size: 42px;
-                    radius: 10px;
                     forward: true;
                     tip: L.fr ? "Suivant" : "Next";
                     clicked => { root.next(); }
@@ -853,7 +894,6 @@ export component AppWindow inherits Window {
                 RepeatButton {
                     x: controls.centre + 26px + 6px + 42px + 4px;
                     size: 28px;
-                    radius: 7px;
                     mode: root.repeat-mode;
                     tip: root.s-repeat;
                     clicked => { root.cycle-repeat(); }
@@ -872,7 +912,8 @@ export component AppWindow inherits Window {
                         by: 6;
                         bw: 10;
                         bh: 8;
-                        ink: root.queue-open ? T.accent : T.text;
+                        ink: root.queue-open ? T.toggle-on : T.toggle-off;
+                        active: root.queue-open;
                         commands: "M5,6 L15,6 M5,10 L15,10 M5,14 L15,14";
                         clicked => { root.toggle-queue(); }
                     }
@@ -894,45 +935,55 @@ export component AppWindow inherits Window {
                 Rectangle {
                     y: 0;
                     height: T.queue-height;
-                    background: T.panel;
+                    background: @linear-gradient(180deg, #FFFFFF0C 0%, #FFFFFF05 100%);
                     Rectangle {
                         y: 0;
                         height: 1px;
-                        background: T.border;
+                        background: T.hairline;
                     }
                     // Header
                     HorizontalLayout {
-                        x: 18px;
-                        y: 10px;
+                        x: 20px;
+                        y: 9px;
                         width: parent.width - 36px;
-                        height: 24px;
-                        spacing: 8px;
-                        Text {
-                            text: root.s-queue;
-                            color: T.text;
-                            font-size: 12px;
-                            font-weight: 600;
-                            vertical-alignment: center;
-                        }
-                        Text {
-                            text: root.queue.length;
-                            color: T.muted;
-                            font-size: 11px;
-                            vertical-alignment: center;
-                            font-family: T.time-font;
+                        height: 30px;
+                        spacing: 6px;
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 0px;
+                            Text {
+                                text: root.s-queue;
+                                color: T.text;
+                                font-size: 12.5px;
+                                font-weight: 600;
+                            }
+                            Text {
+                                text: root.queue-summary;
+                                color: T.muted;
+                                font-size: 10.5px;
+                            }
                         }
                         Rectangle { horizontal-stretch: 1; }
-                        TextButton {
+                        PillButton {
+                            y: (parent.height - self.height) / 2;
                             text: L.fr ? "Ajouter" : "Add";
+                            icon: "M10,4.5 L10,15.5 M4.5,10 L15.5,10";
+                            tip: L.fr ? "Ajouter des fichiers audio" : "Add audio files";
                             clicked => { root.add-files(); }
                         }
-                        TextButton {
+                        PillButton {
+                            y: (parent.height - self.height) / 2;
                             text: L.fr ? "Retirer" : "Remove";
+                            icon: "M4.5,10 L15.5,10";
+                            tip: L.fr ? "Retirer le titre sélectionné" : "Remove the selected track";
                             enabled: root.selected-index >= 0 && root.selected-index < root.queue.length;
                             clicked => { root.remove-index(root.selected-index); }
                         }
-                        TextButton {
+                        PillButton {
+                            y: (parent.height - self.height) / 2;
                             text: L.fr ? "Vider" : "Clear";
+                            icon: "M5,6.5 L15,6.5 M8.2,6.5 L8.2,4.8 L11.8,4.8 L11.8,6.5 M6.5,6.5 L7.2,15.5 L12.8,15.5 L13.5,6.5";
+                            tip: L.fr ? "Vider la file d’attente" : "Clear the play queue";
                             enabled: root.queue.length > 0;
                             clicked => { root.clear-queue(); }
                         }
@@ -1071,7 +1122,6 @@ export component AppWindow inherits Window {
                 SkipButton {
                     y: (parent.height - self.height) / 2;
                     size: 34px;
-                    radius: 10px;
                     glyph: 17px;
                     tip: L.fr ? "Précédent" : "Previous";
                     clicked => { root.previous(); }
@@ -1079,7 +1129,6 @@ export component AppWindow inherits Window {
                 PlayButton {
                     y: (parent.height - self.height) / 2;
                     size: 40px;
-                    radius: 10px;
                     glyph: 20px;
                     playing: root.playing;
                     tip: L.fr ? "Lecture / pause" : "Play / pause";
@@ -1088,7 +1137,6 @@ export component AppWindow inherits Window {
                 SkipButton {
                     y: (parent.height - self.height) / 2;
                     size: 34px;
-                    radius: 10px;
                     glyph: 17px;
                     forward: true;
                     tip: L.fr ? "Suivant" : "Next";
@@ -1097,7 +1145,6 @@ export component AppWindow inherits Window {
                 RepeatButton {
                     y: (parent.height - self.height) / 2;
                     size: 24px;
-                    radius: 7px;
                     small: true;
                     mode: root.repeat-mode;
                     tip: root.s-repeat;
@@ -1106,7 +1153,6 @@ export component AppWindow inherits Window {
                 GlyphButton {
                     y: (parent.height - self.height) / 2;
                     size: 24px;
-                    radius: 7px;
                     glyph: 12px;
                     bx: 0;
                     by: 0;
@@ -1190,13 +1236,13 @@ export component AppWindow inherits Window {
         x: clamp(more.absolute-position.x + more.width - self.width, 6px, root.width - self.width - 6px);
         y: clamp(more.absolute-position.y - self.height - 6px, 6px, root.height - self.height - 6px);
         Rectangle {
-            background: T.elevated;
-            border-radius: 12px;
+            background: #1F1F1FF5;
+            border-radius: 14px;
             border-width: 1px;
-            border-color: T.strong-border;
-            drop-shadow-blur: 20px;
-            drop-shadow-offset-y: 8px;
-            drop-shadow-color: #00000057;
+            border-color: T.hairline;
+            drop-shadow-blur: 28px;
+            drop-shadow-offset-y: 10px;
+            drop-shadow-color: #00000080;
             VerticalLayout {
                 padding: 6px;
                 MenuRow {
@@ -1241,7 +1287,7 @@ export component AppWindow inherits Window {
                         x: 8px;
                         width: parent.width - 16px;
                         height: 1px;
-                        background: T.menu-sep;
+                        background: T.hairline-soft;
                     }
                 }
                 MenuRow {
@@ -1261,7 +1307,7 @@ export component AppWindow inherits Window {
                         x: 8px;
                         width: parent.width - 16px;
                         height: 1px;
-                        background: T.menu-sep;
+                        background: T.hairline-soft;
                     }
                 }
                 MenuRow {
@@ -1286,10 +1332,13 @@ export component AppWindow inherits Window {
         height: 24px;
         x: clamp(Tip.x - self.width / 2, 4px, root.width - self.width - 4px);
         y: self.below ? Tip.bottom + 6px : Tip.top - self.height - 6px;
-        border-radius: 7px;
-        background: T.tooltip;
+        border-radius: 8px;
+        background: #1E1E1EF2;
         border-width: 1px;
-        border-color: T.strong-border;
+        border-color: T.hairline;
+        drop-shadow-blur: 10px;
+        drop-shadow-offset-y: 3px;
+        drop-shadow-color: #00000060;
         opacity: Tip.shown ? 1 : 0;
         visible: self.opacity > 0.01;
         animate opacity { duration: T.quick; easing: ease-out; }

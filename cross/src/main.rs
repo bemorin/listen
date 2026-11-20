@@ -182,6 +182,7 @@ impl App {
             })
             .collect();
         self.queue_model.set_vec(items);
+        self.update_queue_summary();
         for p in &self.state.queue {
             if !self.durations.contains_key(p) {
                 self.durations.insert(p.clone(), None);
@@ -194,6 +195,36 @@ impl App {
         if sel >= self.state.queue.len() as i32 {
             ui.set_selected_index(self.state.queue.len() as i32 - 1);
         }
+    }
+
+    /// "7 tracks · 24 min" (the length once every duration is known).
+    fn update_queue_summary(&self) {
+        let n = self.state.queue.len();
+        let fr = is_french();
+        let count = match (n, fr) {
+            (0, true) => "Aucun titre".to_string(),
+            (0, false) => "No tracks".to_string(),
+            (1, true) => "1 titre".to_string(),
+            (1, false) => "1 track".to_string(),
+            (n, true) => format!("{n} titres"),
+            (n, false) => format!("{n} tracks"),
+        };
+        let mut total = Duration::ZERO;
+        let mut known = n > 0;
+        for p in &self.state.queue {
+            match self.durations.get(p) {
+                Some(Some(d)) => total += *d,
+                _ => known = false,
+            }
+        }
+        let summary = if known {
+            let mins = (total.as_secs() + 59) / 60;
+            let length = if mins >= 60 { format!("{} h {} min", mins / 60, mins % 60) } else { format!("{mins} min") };
+            format!("{count} · {length}")
+        } else {
+            count
+        };
+        self.ui().set_queue_summary(summary.into());
     }
 
     fn show_track(&mut self) {
@@ -564,7 +595,7 @@ impl App {
     }
 
     /// The clock runs only while playing, at the pace the progress bar needs to glide: about a
-    /// sixth of a pixel per frame, between 10 and 30 frames a second (24 with the queue's bars
+    /// sixth of a pixel per frame, between 10 and 30 frames a second (16 with the queue's bars
     /// moving). A song of a few minutes needs about 11 redraws a second.
     fn retime_progress(&self) {
         if !self.engine.is_playing() {
@@ -582,7 +613,7 @@ impl App {
         let bar_px = (width - reserved * scale).max(40.0);
         let mut ms = if dur > 0.0 { dur * 1000.0 / (bar_px * 6.0) } else { 100.0 };
         if ui.get_queue_shown() {
-            ms = ms.min(42.0);
+            ms = ms.min(62.0);
         }
         let interval = Duration::from_millis(ms.clamp(33.0, 100.0) as u64);
         if self.progress_interval.get() != interval {
@@ -616,6 +647,7 @@ impl App {
             match r {
                 MetaResult::Duration(p, d, title) => {
                     self.durations.insert(p.clone(), d);
+                    self.update_queue_summary();
                     if let Some(t) = &title {
                         self.titles.insert(p.clone(), t.clone());
                     }
@@ -655,6 +687,9 @@ impl App {
                         );
                         ui.set_artwork(slint::Image::from_rgba8(buf));
                         ui.set_tint(slint::Color::from_rgb_u8(a.tint[0], a.tint[1], a.tint[2]));
+                        let [ga, gb] = a.glow;
+                        ui.set_tint_a(slint::Color::from_rgb_u8(ga[0], ga[1], ga[2]));
+                        ui.set_tint_b(slint::Color::from_rgb_u8(gb[0], gb[1], gb[2]));
                         ui.set_has_artwork(true);
                         cover_url = self.write_cover(a);
                     } else {

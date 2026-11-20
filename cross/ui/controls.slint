@@ -61,17 +61,23 @@ component TipSource {
 
 export component IconButton inherits Rectangle {
     in property <length> size: 30px;
-    in property <length> radius: 8px;
+    // Circular by default: hover and press read as soft discs of light.
+    in property <length> radius: self.size / 2;
     in property <string> tip;
     in property <color> rest: transparent;
     in property <bool> enabled: true;
+    // On (always on top, queue shown, repeat): a glass disc behind a full-white glyph.
+    in property <bool> active;
     callback clicked;
     out property <bool> hovered: ta.has-hover;
     out property <bool> down: ta.pressed;
     width: self.size;
     height: self.size;
     border-radius: self.radius;
-    background: !root.enabled ? root.rest : ta.pressed ? T.pressed : ta.has-hover ? T.hover : root.rest;
+    background: !root.enabled ? root.rest
+        : ta.pressed ? (root.active ? #FFFFFF38 : T.glass-pressed)
+        : ta.has-hover ? (root.active ? #FFFFFF2E : T.glass-hover)
+        : root.active ? #FFFFFF1F : root.rest;
     animate background { duration: T.quick; easing: ease-out; }
 
     @children
@@ -139,16 +145,16 @@ export component SkipButton inherits IconButton {
     }
 }
 
-// Play / pause, framed by the accent ring. The glyphs cross-fade with a slight scale.
+// Play / pause: a light disc with a dark glyph. The glyphs cross-fade with a slight scale;
+// the disc brightens under the pointer and dips when pressed.
 export component PlayButton inherits IconButton {
     in property <bool> playing;
     in property <length> glyph: 19px;
-    rest: T.elevated;
-    border-width: 1px;
-    border-color: root.hovered ? #FF9A62 : T.accent;
-    drop-shadow-blur: root.hovered ? 14px : 0px;
-    drop-shadow-color: #F47A3A38;
-    animate border-color, drop-shadow-blur { duration: T.medium; easing: ease-out; }
+    background: self.down ? T.disc-pressed : self.hovered ? T.disc-hover : T.disc;
+    drop-shadow-blur: self.hovered ? 18px : 10px;
+    drop-shadow-offset-y: 3px;
+    drop-shadow-color: self.hovered ? #FFFFFF2A : #00000066;
+    animate drop-shadow-blur, drop-shadow-color { duration: T.medium; easing: ease-out; }
     property <length> inner: root.down ? root.glyph * 0.88 : root.glyph;
     animate inner { duration: T.medium; easing: M.spring; }
 
@@ -161,7 +167,7 @@ export component PlayButton inherits IconButton {
         viewbox-y: 2;
         viewbox-width: 12;
         viewbox-height: 16;
-        fill: T.text;
+        fill: T.disc-glyph;
         commands: "M5.2,2.6 C4.6,2.2 4,2.6 4,3.3 L4,16.7 C4,17.4 4.6,17.8 5.2,17.4 L15.3,10.7 C15.8,10.3 15.8,9.7 15.3,9.3 Z";
         opacity: root.playing ? 0 : 1;
         animate opacity, width { duration: T.medium; easing: M.spring; }
@@ -177,23 +183,24 @@ export component PlayButton inherits IconButton {
             width: max(2.2px, parent.width * 0.17);
             height: parent.height * 0.72;
             border-radius: 1px;
-            background: T.text;
+            background: T.disc-glyph;
         }
         Rectangle {
             x: parent.width * 0.5 + 1.5px;
             width: max(2.2px, parent.width * 0.17);
             height: parent.height * 0.72;
             border-radius: 1px;
-            background: T.text;
+            background: T.disc-glyph;
         }
     }
 }
 
-// Repeat: an infinity sign; accent when on, a small "1" above it for repeat-one.
+// Repeat: an infinity sign; lit when on, a small "1" above it for repeat-one.
 export component RepeatButton inherits IconButton {
     in property <int> mode;
     in property <bool> small;
-    property <color> c: root.mode == 0 ? T.text : T.accent;
+    active: self.mode != 0;
+    property <color> c: root.mode == 0 ? T.toggle-off : T.toggle-on;
     Glyph {
         width: root.small ? 16px : 18px;
         height: root.small ? 9.5px : 10.5px;
@@ -229,28 +236,58 @@ export component DotsButton inherits IconButton {
     }
 }
 
-// Pill text button of the queue header (Add, Remove, Clear).
-export component TextButton inherits Rectangle {
+// Capsule button with an icon and a label (queue header: Add, Remove, Clear).
+export component PillButton inherits Rectangle {
     in property <string> text;
+    in property <string> icon;
     in property <bool> enabled: true;
+    in property <string> tip;
     callback clicked;
-    height: 24px;
-    width: label.preferred-width + 20px;
-    border-radius: 8px;
+    height: 26px;
+    width: row.preferred-width + 22px;
+    border-radius: self.height / 2;
+    background: !root.enabled ? T.glass : ta.pressed ? T.glass-pressed : ta.has-hover ? T.glass-hover : T.glass-raised;
     border-width: 1px;
-    border-color: ta.has-hover && root.enabled ? T.strong-border : T.border;
-    background: !root.enabled ? transparent : ta.pressed ? T.pressed : ta.has-hover ? T.hover : transparent;
-    animate background, border-color { duration: T.quick; }
-    label := Text {
-        text: root.text;
-        color: !root.enabled ? T.border.mix(T.muted, 0.4) : ta.has-hover ? T.secondary : T.muted;
-        font-size: 10.5px;
-        animate color { duration: T.quick; }
+    border-color: T.hairline-soft;
+    animate background { duration: T.quick; }
+    row := HorizontalLayout {
+        alignment: center;
+        spacing: 6px;
+        Glyph {
+            y: (parent.height - self.height) / 2;
+            width: 10px;
+            height: 10px;
+            bx: 4;
+            by: 4;
+            bw: 12;
+            bh: 12;
+            thickness: 1.5px;
+            commands: root.icon;
+            color: !root.enabled ? #FFFFFF40 : ta.has-hover ? T.text : T.secondary;
+        }
+        Text {
+            text: root.text;
+            vertical-alignment: center;
+            font-size: 11px;
+            color: !root.enabled ? #FFFFFF40 : ta.has-hover ? T.text : T.secondary;
+            animate color { duration: T.quick; }
+        }
     }
     ta := TouchArea {
         enabled: root.enabled;
         mouse-cursor: root.enabled ? pointer : default;
-        clicked => { root.clicked(); }
+        clicked => {
+            Tip.shown = false;
+            root.clicked();
+        }
+    }
+    TipSource {
+        tip: root.tip;
+        hovered: ta.has-hover;
+        pressed: ta.pressed;
+        anchor-x: root.absolute-position.x + root.width / 2;
+        anchor-top: root.absolute-position.y;
+        anchor-bottom: root.absolute-position.y + root.height;
     }
 }
 
@@ -263,6 +300,7 @@ export component Slider inherits Rectangle {
     in property <bool> enabled: true;
     in property <bool> grow-on-hover: true;
     in property <bool> wheel: false;
+    in property <color> fill: T.accent;
     // Live value while dragging (also set on press).
     callback scrub(float);
     // Final value on release.
@@ -283,13 +321,13 @@ export component Slider inherits Rectangle {
         width: root.width - 2 * root.inset;
         height: root.h;
         border-radius: self.height / 2;
-        background: T.track;
+        background: T.rail;
         Rectangle {
             x: 0;
             width: parent.width * clamp(root.shown, 0, 1);
             height: parent.height;
             border-radius: parent.border-radius;
-            background: T.accent;
+            background: root.fill;
         }
     }
     if root.show-thumb && root.enabled: Rectangle {

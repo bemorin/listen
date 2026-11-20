@@ -198,7 +198,7 @@ pub fn style_window(_w: &Window) {
                 &dark as *const _ as _,
                 4,
             );
-            let border: u32 = 0x0030_3030; // COLORREF 0x00BBGGRR: the app's #303030 border.
+            let border: u32 = 0x002C_2C2C; // COLORREF 0x00BBGGRR: a hairline a shade above the background.
             DwmSetWindowAttribute(
                 hwnd as _,
                 DWMWA_BORDER_COLOR as u32,

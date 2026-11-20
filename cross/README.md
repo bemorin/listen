@@ -34,15 +34,14 @@ The rest of the stack:
 
 ## Measured footprint (Windows 11 x64, release build)
 
-All numbers are private working set (Task Manager → Memory), measured with `bench/measure.ps1`.
+Both apps ran on the same machine and were measured the same way. Memory is the private working set (Task Manager → Memory); CPU is process time over 15 s. Playback was the same 4:27 MP3. The WPF app was built from `../src` with its own `scripts/build.ps1`.
 
 | | Windows app (WPF, .NET Framework) | Cross-platform app (this folder) |
 | --- | --- | --- |
-| Binary | ~100–130 KB (needs .NET Framework, which ships with Windows) | 8.65 MB, self-contained (no runtime) |
-| Memory at start | ~35 MB | **5.2–5.7 MB** |
-| Memory while playing | – | **5.5 MB** (full), **3.8 MB** (mini), **6.3 MB** (queue open) |
-| Memory after use (queue, mini/full switches) | ~55 MB | **6.5 MB** |
-| CPU while playing | – | ~2 % of one core (full or mini), ~4 % with the queue's animated bars; decoding included |
+| Binary | 130.5 KB (needs .NET Framework, which ships with Windows) | 8.7 MB, self-contained (no runtime) |
+| Memory at idle | 49.8 MB (with a saved queue loaded) | **4.7 MB** (empty queue) |
+| Memory while playing | 38.9 MB | **5.3 MB** (full), **3.8 MB** (mini), **6.3 MB** (queue open) |
+| CPU while playing | 2.5 % of one core (progress updated 4× a second) | **2.2 %** (full), **2.4 %** (mini), **5.5 %** (queue open, animated bars); the progress bar glides continuously |
 | CPU while paused | – | ~0.3 % of one core; the audio device is released after 20 s |
 
 The binary is larger because nothing is borrowed from the OS. The UI toolkit, font shaping, the decoders and image decoding are all inside the executable.
@@ -103,7 +102,7 @@ State is stored in `%APPDATA%\Listen` (Windows), `~/Library/Application Support/
 
 ## What carries over from the Windows app
 
-- The same tokens: colours, sizes and spacing from `UiTokens.cs`, and the same glyph geometry.
+- The same sizes, spacing and glyph geometry as `UiTokens.cs`. The colours moved to the new palette described below.
 - The same layouts: full player, play queue drawer, mini player (title, five buttons, thin progress bar), and the "more" menu.
 - **The adaptive window.** Every layout change is a function of the height. Shrinking the window shrinks and fades the artwork, then fades the centred title out before the title-bar title fades in. Below the compact height, the window becomes the mini player. Pulled taller from the mini player, it becomes the full player again.
 - **The mini player** is resizable on every edge, down to just its five buttons. Its title hides once it no longer fits.
@@ -132,13 +131,16 @@ On macOS and Linux, winit moves and resizes in two calls, so a morph that grows 
 
 Apple-grade polish, without new weight:
 
+- **Light and glass.** The interface is neutral: white glyphs, a white progress bar, and translucent "glass" surfaces with a faint highlight edge (queue drawer, menu, tooltips, pills). The colour comes from the music. Two colours sampled from the artwork, made vivid enough to read as light, bleed softly into the window and cross-fade on track change. Without artwork, the window uses a quiet warm/cool duotone. A fine grain keeps these very soft gradients from banding.
+- **New mark.** The orange note becomes a short waveform in a periwinkle, lavender and aqua gradient, on a dark glass tile. It is used for the app icon, the window and the title bar (`assets/make-icon.ps1` renders it, and `assets/make-ico.py` packs the `.ico`). The same gradient lights the queue's now-playing bars. The Windows app's icon in `../build` is unchanged.
+- **Play disc.** Play and pause sit on a light disc with a dark glyph, like a system Now Playing control. It brightens under the pointer and dips when pressed. All other buttons light up as soft circles. Toggles that are on (always on top, queue, repeat) show a glass disc behind a full-white glyph.
+
 - **Artwork.** Embedded cover art is read from MP3, FLAC and M4A tags, or from `cover.jpg` / `folder.jpg` next to the file. It sits on a soft halo tinted with the artwork's own colour, and rests 10 % smaller while paused, with a spring.
 - **Transport.** The play and pause glyphs cross-fade with a slight scale. Skip glyphs nudge in their direction when pressed. Hover and press states fade in about 120 ms.
 - **Seek bar.** It glides continuously: a local clock re-anchored on the audio clock is sampled at the pace the bar needs, about a sixth of a pixel per frame. A song of a few minutes costs about 11 redraws a second; a short clip costs up to 30. The bar thickens under the pointer, and its thumb grows. A time bubble follows the pointer. Scrubbing previews the time, and the seek happens on release. A click on the duration switches to the remaining time (−03:12), and the choice is remembered.
 - **Track changes.** The title and subtitle cross-fade with a slight rise. The artwork dims through the change, and the new cover fades in. Tags are read before the artwork is decoded, so the title is final before the fade ends.
 - **Volume.** The icon reflects the level (muted, low, high). A bubble shows the level while you adjust it. The mouse wheel works over the volume slider, and `↑`/`↓` change it. The slider uses a perceptual curve, so it sounds even across its travel.
-- **Play button.** Its accent ring brightens and glows softly under the pointer.
-- **Queue.** Titles come from tags, and durations are computed in the background (exactly, even for VBR MP3s without a header). Drag a row to reorder: it lifts with a shadow and follows the pointer, and the rows it passes slide out of its way. Bars bounce beside the playing item. Hovering a row reveals a remove button. Remove and Clear are disabled when they would do nothing.
+- **Queue.** The header reads "Play queue · 7 tracks · 24 min", and Add, Remove and Clear are capsules with icons. Titles come from tags, and durations are computed in the background (exactly, even for VBR MP3s without a header). Drag a row to reorder: it lifts with a shadow and follows the pointer, and the rows it passes slide out of its way. Bars bounce beside the playing item. Hovering a row reveals a remove button. Remove and Clear are disabled when they would do nothing.
 - **Names.** "03 - Song.flac" is no longer shown with "03" as the artist; tags win when present.
 - **Resting heights.** Released between two layouts after a resize, the window settles on the nearer one (mini, compact, title only, artwork), so it never rests on a half-faded state.
 - **Menu.** The "more" menu shows keyboard shortcuts. Its rows compress to fit a short window.

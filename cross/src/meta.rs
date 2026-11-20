@@ -189,6 +189,9 @@ pub struct Artwork {
     pub size: u32,
     pub rgba: Vec<u8>,
     pub tint: [u8; 3],
+    /// Ambient colours from the top-left and bottom-right of the artwork, made vivid enough
+    /// to read as light on a dark window.
+    pub glow: [[u8; 3]; 2],
 }
 
 /// `reject_flat` drops near-uniform images: right for folder images (Windows Media Player
@@ -229,11 +232,66 @@ pub fn decode_artwork(data: &[u8], size: u32, reject_flat: bool) -> Option<Artwo
     if reject_flat && (var / (3 * n) as f64).sqrt() < 6.0 {
         return None;
     }
+    let quadrant = |x0: u32, y0: u32| {
+        let half = (actual / 2).max(1);
+        let (mut r, mut g, mut b, mut n) = (0u64, 0u64, 0u64, 0u64);
+        for y in (y0..(y0 + half).min(actual)).step_by(3) {
+            for x in (x0..(x0 + half).min(actual)).step_by(3) {
+                let px = scaled.get_pixel(x, y);
+                r += px[0] as u64;
+                g += px[1] as u64;
+                b += px[2] as u64;
+                n += 1;
+            }
+        }
+        let n = n.max(1);
+        vivid([(r / n) as u8, (g / n) as u8, (b / n) as u8])
+    };
+    let glow = [quadrant(0, 0), quadrant(actual / 2, actual / 2)];
     Some(Artwork {
         size: actual,
         rgba: scaled.into_raw(),
-        tint: [(r / n) as u8, (g / n) as u8, (b / n) as u8],
+        tint: vivid([(r / n) as u8, (g / n) as u8, (b / n) as u8]),
+        glow,
     })
+}
+
+/// Lifts a sampled colour into a glow: more saturated, mid lightness. Greys stay grey.
+fn vivid(c: [u8; 3]) -> [u8; 3] {
+    let [r, g, b] = c.map(|v| v as f32 / 255.0);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) / 2.0;
+    let d = max - min;
+    if d < 0.02 {
+        let v = (l.clamp(0.22, 0.4) * 255.0) as u8;
+        return [v, v, v];
+    }
+    let s = d / (1.0 - (2.0 * l - 1.0).abs());
+    let h = if max == r {
+        ((g - b) / d).rem_euclid(6.0)
+    } else if max == g {
+        (b - r) / d + 2.0
+    } else {
+        (r - g) / d + 4.0
+    } / 6.0;
+    let s = (s * 1.25).min(0.8);
+    let l = l.clamp(0.3, 0.48);
+    let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+    let p = 2.0 * l - q;
+    let hue = |t: f32| {
+        let t = t.rem_euclid(1.0);
+        if t < 1.0 / 6.0 {
+            p + (q - p) * 6.0 * t
+        } else if t < 0.5 {
+            q
+        } else if t < 2.0 / 3.0 {
+            p + (q - p) * (2.0 / 3.0 - t) * 6.0
+        } else {
+            p
+        }
+    };
+    [hue(h + 1.0 / 3.0), hue(h), hue(h - 1.0 / 3.0)].map(|v| (v * 255.0).round() as u8)
 }
 
 pub fn format_time(d: Duration) -> String {

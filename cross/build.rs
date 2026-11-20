@@ -6,7 +6,7 @@ fn main() {
         #[cfg(windows)]
         {
             let mut res = winresource::WindowsResource::new();
-            res.set_icon("../build/icon.ico");
+            res.set_icon("assets/listen.ico");
             res.set("ProductName", "Listen");
             res.set("FileDescription", "Listen");
             res.set_manifest(include_str!("assets/listen.manifest"));
@@ -16,4 +16,5 @@ fn main() {
         }
     }
     println!("cargo:rerun-if-changed=assets/listen.manifest");
+    println!("cargo:rerun-if-changed=assets/listen.ico");
 }

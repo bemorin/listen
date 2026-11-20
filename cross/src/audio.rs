@@ -201,5 +201,10 @@ impl Engine {
 
 /// Slider position to amplitude: a squared curve so the slider feels even to the ear.
 fn perceptual(v: f32) -> f32 {
+    // Debug builds: LISTEN_SILENT=1 keeps test runs inaudible whatever the volume says.
+    #[cfg(debug_assertions)]
+    if std::env::var_os("LISTEN_SILENT").is_some() {
+        return 0.0;
+    }
     v * v
 }

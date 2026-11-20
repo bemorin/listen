@@ -76,12 +76,12 @@ jobs:
           mkdir -p "$app/MacOS" "$app/Resources"
           cp target/release/listen "$app/MacOS/listen"
           sed "s/__VERSION__/$version/g" assets/macos/Info.plist > "$app/Info.plist"
-          # Icon from the shared 512 px PNG.
+          # Icon from cross/assets/icon-512.png.
           iconset=$(mktemp -d)/Listen.iconset
           mkdir -p "$iconset"
           for s in 16 32 128 256 512; do
-            sips -z $s $s ../build/icon.png --out "$iconset/icon_${s}x${s}.png" >/dev/null
-            sips -z $((s*2)) $((s*2)) ../build/icon.png --out "$iconset/icon_${s}x${s}@2x.png" >/dev/null
+            sips -z $s $s assets/icon-512.png --out "$iconset/icon_${s}x${s}.png" >/dev/null
+            sips -z $((s*2)) $((s*2)) assets/icon-512.png --out "$iconset/icon_${s}x${s}@2x.png" >/dev/null
           done
           iconutil -c icns "$iconset" -o "$app/Resources/Listen.icns" || true
           codesign --force --deep --sign - dist/Listen.app || true
