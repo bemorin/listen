@@ -1,0 +1,363 @@
+// Small building blocks: glyphs, buttons, sliders. Geometry comes from the Windows app.
+
+import { T, M, Tip } from "theme.slint";
+
+// A stroked vector glyph. `bx/by/bw/bh` is the geometry's bounding box, fitted to the size.
+export component Glyph inherits Path {
+    in property <color> color: T.text;
+    in property <length> thickness: 1.55px;
+    in property <float> bx;
+    in property <float> by;
+    in property <float> bw: 20;
+    in property <float> bh: 20;
+    viewbox-x: self.bx;
+    viewbox-y: self.by;
+    viewbox-width: self.bw;
+    viewbox-height: self.bh;
+    stroke: self.color;
+    stroke-width: self.thickness;
+    stroke-line-cap: round;
+    stroke-line-join: round;
+    fill: transparent;
+    animate stroke { duration: T.medium; easing: ease-out; }
+}
+
+// Shows the shared tooltip after a hover pause; hides it when the pointer leaves.
+component TipSource {
+    in property <string> tip;
+    in property <bool> hovered;
+    in property <bool> pressed;
+    in property <length> anchor-x;
+    in property <length> anchor-top;
+    in property <length> anchor-bottom;
+    property <int> id: 0;
+    init => {
+        self.id = Tip.next-owner;
+        Tip.next-owner += 1;
+    }
+    changed hovered => {
+        if (!self.hovered && Tip.owner == self.id) {
+            Tip.shown = false;
+        }
+    }
+    changed pressed => {
+        if (self.pressed && Tip.owner == self.id) {
+            Tip.shown = false;
+        }
+    }
+    Timer {
+        interval: Tip.shown ? 60ms : 600ms;
+        running: root.hovered && !root.pressed && root.tip != "" && !(Tip.shown && Tip.owner == root.id);
+        triggered => {
+            Tip.text = root.tip;
+            Tip.x = root.anchor-x;
+            Tip.top = root.anchor-top;
+            Tip.bottom = root.anchor-bottom;
+            Tip.owner = root.id;
+            Tip.shown = true;
+        }
+    }
+}
+
+export component IconButton inherits Rectangle {
+    in property <length> size: 30px;
+    // Circular by default: hover and press read as soft discs of light.
+    in property <length> radius: self.size / 2;
+    in property <string> tip;
+    in property <color> rest: transparent;
+    in property <bool> enabled: true;
+    // On (always on top, queue shown, repeat): a glass disc behind a full-white glyph.
+    in property <bool> active;
+    callback clicked;
+    out property <bool> hovered: ta.has-hover;
+    out property <bool> down: ta.pressed;
+    width: self.size;
+    height: self.size;
+    border-radius: self.radius;
+    background: !root.enabled ? root.rest
+        : ta.pressed ? (root.active ? #FFFFFF38 : T.glass-pressed)
+        : ta.has-hover ? (root.active ? #FFFFFF2E : T.glass-hover)
+        : root.active ? #FFFFFF1F : root.rest;
+    animate background { duration: T.quick; easing: ease-out; }
+
+    @children
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            Tip.shown = false;
+            root.clicked();
+        }
+    }
+
+    TipSource {
+        tip: root.tip;
+        hovered: ta.has-hover;
+        pressed: ta.pressed;
+        anchor-x: root.absolute-position.x + root.width / 2;
+        anchor-top: root.absolute-position.y;
+        anchor-bottom: root.absolute-position.y + root.height;
+    }
+}
+
+// Glyph button of the Windows app (topmost, mini, minimise, close, queue...).
+export component GlyphButton inherits IconButton {
+    in property <string> commands;
+    in property <float> bx;
+    in property <float> by;
+    in property <float> bw: 20;
+    in property <float> bh: 20;
+    in property <length> glyph: 16px;
+    in property <color> ink: T.text;
+    in property <length> thickness: 1.55px;
+    Glyph {
+        width: root.glyph * root.bw / max(root.bw, root.bh);
+        height: root.glyph * root.bh / max(root.bw, root.bh);
+        commands: root.commands;
+        bx: root.bx;
+        by: root.by;
+        bw: root.bw;
+        bh: root.bh;
+        color: root.ink;
+        thickness: root.thickness;
+        opacity: root.down ? 0.75 : 1;
+        animate opacity { duration: T.quick; }
+    }
+}
+
+// Filled skip glyph: a bar and a triangle on a 20x20 canvas.
+export component SkipButton inherits IconButton {
+    in property <bool> forward;
+    in property <length> glyph: 18px;
+    Path {
+        width: root.glyph;
+        height: root.glyph;
+        viewbox-width: 20;
+        viewbox-height: 20;
+        fill: T.text;
+        commands: root.forward
+            ? "M5,4 L14.5,10 L5,16 Z M16.2,4.9 C16.2,4.4 16.6,4 17.1,4 C17.6,4 18,4.4 18,4.9 L18,15.1 C18,15.6 17.6,16 17.1,16 C16.6,16 16.2,15.6 16.2,15.1 Z"
+            : "M15,4 L5.5,10 L15,16 Z M2,4.9 C2,4.4 2.4,4 2.9,4 C3.4,4 3.8,4.4 3.8,4.9 L3.8,15.1 C3.8,15.6 3.4,16 2.9,16 C2.4,16 2,15.6 2,15.1 Z";
+        // A small nudge in the direction of travel on press.
+        x: (parent.width - self.width) / 2 + (root.down ? (root.forward ? 1.5px : -1.5px) : 0);
+        animate x { duration: T.quick; easing: M.settle; }
+    }
+}
+
+// Play / pause: a light disc with a dark glyph. The glyphs cross-fade with a slight scale;
+// the disc brightens under the pointer and dips when pressed.
+export component PlayButton inherits IconButton {
+    in property <bool> playing;
+    in property <length> glyph: 19px;
+    background: self.down ? T.disc-pressed : self.hovered ? T.disc-hover : T.disc;
+    drop-shadow-blur: self.hovered ? 18px : 10px;
+    drop-shadow-offset-y: 3px;
+    drop-shadow-color: self.hovered ? #FFFFFF2A : #00000066;
+    animate drop-shadow-blur, drop-shadow-color { duration: T.medium; easing: ease-out; }
+    property <length> inner: root.down ? root.glyph * 0.88 : root.glyph;
+    animate inner { duration: T.medium; easing: M.spring; }
+
+    // Play
+    Path {
+        width: root.inner * (root.playing ? 0.6 : 1);
+        height: self.width;
+        x: (parent.width - self.width) / 2 + self.width * 0.06;
+        viewbox-x: 4;
+        viewbox-y: 2;
+        viewbox-width: 12;
+        viewbox-height: 16;
+        fill: T.disc-glyph;
+        commands: "M5.2,2.6 C4.6,2.2 4,2.6 4,3.3 L4,16.7 C4,17.4 4.6,17.8 5.2,17.4 L15.3,10.7 C15.8,10.3 15.8,9.7 15.3,9.3 Z";
+        opacity: root.playing ? 0 : 1;
+        animate opacity, width { duration: T.medium; easing: M.spring; }
+    }
+    // Pause: both bars in one path covering the whole button, mirror-symmetric about its
+    // centre, so they always rasterise identically (separate rectangles at half-pixel
+    // positions came out unequal).
+    Path {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        fill: T.disc-glyph;
+        opacity: root.playing ? 1 : 0;
+        animate opacity { duration: T.medium; easing: ease-out; }
+        commands: "M40.6,37.5 L44.9,37.5 Q46.6,37.5 46.6,39.2 L46.6,60.8 Q46.6,62.5 44.9,62.5 L40.6,62.5 Q38.9,62.5 38.9,60.8 L38.9,39.2 Q38.9,37.5 40.6,37.5 Z M55.1,37.5 L59.4,37.5 Q61.1,37.5 61.1,39.2 L61.1,60.8 Q61.1,62.5 59.4,62.5 L55.1,62.5 Q53.4,62.5 53.4,60.8 L53.4,39.2 Q53.4,37.5 55.1,37.5 Z";
+    }
+}
+
+// Repeat: an infinity sign; lit when on, a small "1" above it for repeat-one.
+export component RepeatButton inherits IconButton {
+    in property <int> mode;
+    in property <bool> small;
+    active: self.mode != 0;
+    property <color> c: root.mode == 0 ? T.toggle-off : T.toggle-on;
+    Glyph {
+        width: root.small ? 16px : 19.5px;
+        height: root.small ? 9.5px : 11.4px;
+        y: (parent.height - self.height) / 2 + (root.mode == 2 ? 2.5px : 0);
+        animate y { duration: T.medium; easing: M.spring; }
+        bx: 1.5;
+        by: 4.7;
+        bw: 15;
+        bh: 6.6;
+        thickness: 1.65px;
+        color: root.c;
+        commands: "M1.5,8 C1.5,4.6 5.0,3.9 8.8,8 C12.6,12.1 16.5,11.4 16.5,8 C16.5,4.6 13.0,3.9 9.2,8 C5.4,12.1 1.5,11.4 1.5,8";
+    }
+    Text {
+        text: "1";
+        color: T.accent;
+        font-family: T.time-font;
+        font-size: root.small ? 7px : 8px;
+        font-weight: 700;
+        y: root.mode == 2 ? parent.height / 2 - 11px : parent.height / 2 - 6px;
+        opacity: root.mode == 2 ? 1 : 0;
+        animate y, opacity { duration: T.medium; easing: M.spring; }
+    }
+}
+
+export component DotsButton inherits IconButton {
+    for i in 3: Rectangle {
+        width: 2.4px;
+        height: 2.4px;
+        border-radius: 1.2px;
+        background: T.text;
+        y: parent.height / 2 - 1.2px + (i - 1) * 5.2px;
+    }
+}
+
+// Capsule button with an icon and a label (queue header: Add, Remove, Clear).
+export component PillButton inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <bool> enabled: true;
+    in property <string> tip;
+    callback clicked;
+    height: 26px;
+    width: row.preferred-width + 22px;
+    border-radius: self.height / 2;
+    background: !root.enabled ? T.glass : ta.pressed ? T.glass-pressed : ta.has-hover ? T.glass-hover : T.glass-raised;
+    border-width: 1px;
+    border-color: T.hairline-soft;
+    animate background { duration: T.quick; }
+    row := HorizontalLayout {
+        alignment: center;
+        spacing: 6px;
+        Glyph {
+            y: (parent.height - self.height) / 2;
+            width: 10px;
+            height: 10px;
+            bx: 4;
+            by: 4;
+            bw: 12;
+            bh: 12;
+            thickness: 1.5px;
+            commands: root.icon;
+            color: !root.enabled ? #FFFFFF40 : ta.has-hover ? T.text : T.secondary;
+        }
+        Text {
+            text: root.text;
+            vertical-alignment: center;
+            font-size: 11px;
+            color: !root.enabled ? #FFFFFF40 : ta.has-hover ? T.text : T.secondary;
+            animate color { duration: T.quick; }
+        }
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            Tip.shown = false;
+            root.clicked();
+        }
+    }
+    TipSource {
+        tip: root.tip;
+        hovered: ta.has-hover;
+        pressed: ta.pressed;
+        anchor-x: root.absolute-position.x + root.width / 2;
+        anchor-top: root.absolute-position.y;
+        anchor-bottom: root.absolute-position.y + root.height;
+    }
+}
+
+// Seek and volume slider: a thin track that thickens under the pointer, with a thumb.
+export component Slider inherits Rectangle {
+    // Value shown while not dragging.
+    in property <float> value;
+    in property <bool> show-thumb: true;
+    in property <length> track: 3px;
+    in property <bool> enabled: true;
+    in property <bool> grow-on-hover: true;
+    in property <bool> wheel: false;
+    in property <color> fill: T.accent;
+    // Live value while dragging (also set on press).
+    callback scrub(float);
+    // Final value on release.
+    callback commit(float);
+    out property <bool> dragging: ta.pressed;
+    out property <bool> hovered: ta.has-hover;
+    out property <float> shown: ta.pressed ? root.drag-value : root.value;
+    out property <float> hover-value: clamp((ta.mouse-x - root.inset) / max(1px, root.width - 2 * root.inset), 0, 1);
+    out property <length> hover-x: root.inset + root.hover-value * (root.width - 2 * root.inset);
+    property <float> drag-value;
+    property <length> inset: root.show-thumb ? 7px : 0px;
+    property <bool> hot: (ta.has-hover || ta.pressed) && root.enabled;
+    property <length> h: root.hot && root.grow-on-hover ? root.track + 2px : root.track;
+    animate h { duration: T.medium; easing: M.settle; }
+
+    Rectangle {
+        x: root.inset;
+        width: root.width - 2 * root.inset;
+        height: root.h;
+        border-radius: self.height / 2;
+        background: T.rail;
+        Rectangle {
+            x: 0;
+            width: parent.width * clamp(root.shown, 0, 1);
+            height: parent.height;
+            border-radius: parent.border-radius;
+            background: root.fill;
+        }
+    }
+    if root.show-thumb && root.enabled: Rectangle {
+        property <length> r: root.hot ? 6px : 4px;
+        animate r { duration: T.medium; easing: M.spring; }
+        x: root.inset + (root.width - 2 * root.inset) * clamp(root.shown, 0, 1) - self.r;
+        width: self.r * 2;
+        height: self.r * 2;
+        border-radius: self.r;
+        background: T.thumb;
+        drop-shadow-blur: root.hot ? 4px : 0px;
+        drop-shadow-color: #0008;
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.left) {
+                if (e.kind == PointerEventKind.down) {
+                    root.drag-value = root.hover-value;
+                    root.scrub(root.drag-value);
+                } else if (e.kind == PointerEventKind.up) {
+                    root.commit(root.drag-value);
+                }
+            }
+        }
+        moved => {
+            if (self.pressed) {
+                root.drag-value = root.hover-value;
+                root.scrub(root.drag-value);
+            }
+        }
+        scroll-event(e) => {
+            if (!root.wheel) { return reject; }
+            root.commit(clamp(root.value + (e.delta-y > 0 ? 0.05 : -0.05), 0, 1));
+            accept
+        }
+    }
+}

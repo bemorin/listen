@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>Listen</string>
+  <key>CFBundleDisplayName</key><string>Listen</string>
+  <key>CFBundleIdentifier</key><string>com.bemorin.listen</string>
+  <key>CFBundleExecutable</key><string>listen</string>
+  <key>CFBundleIconFile</key><string>Listen</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleVersion</key><string>__VERSION__</string>
+  <key>CFBundleShortVersionString</key><string>__VERSION__</string>
+  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key><string>Audio</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.mp3</string>
+        <string>com.microsoft.waveform-audio</string>
+        <string>public.mpeg-4-audio</string>
+        <string>public.aac-audio</string>
+        <string>org.xiph.flac</string>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>

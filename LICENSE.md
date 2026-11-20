@@ -19,3 +19,10 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+The MIT License above covers the source code and documentation. It does not cover the
+Listen name, logos or app icons (including the files in `build/` and `cross/assets/` that
+contain them), which remain © 2026 Ben Morin, all rights reserved. Forks and derivative
+works may reuse the code under the MIT License, but must use a different name and icon.

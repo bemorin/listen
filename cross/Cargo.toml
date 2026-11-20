@@ -1,0 +1,51 @@
+[package]
+name = "listen"
+version = "2.0.0"
+edition = "2021"
+description = "A tiny, audio-only player"
+license = "MIT"
+publish = false
+
+[features]
+default = []
+# Screen-reader support (AccessKit). Off by default: it adds a thread and several MB of memory.
+accessibility = ["slint/accessibility"]
+# Test hooks in release builds: LISTEN_DEBUG_CMDS (drive the app from a command file) and
+# LISTEN_SILENT (no audio output). Always on in debug builds.
+test-hooks = []
+
+[dependencies]
+slint = { version = "1.19", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-software", "unstable-winit-030"] }
+rodio = { version = "0.23", default-features = false, features = ["playback", "mp3", "flac", "wav", "mp4", "symphonia-alac"] }
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "flac", "wav", "pcm", "aac", "isomp4", "alac"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+souvlaki = "0.9"
+sys-locale = "0.3"
+# Already in the binary through Slint's SVG support; renders the wordmark at pixel size.
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
+
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+rfd = { version = "0.18", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell"] }
+
+[build-dependencies]
+slint-build = "1.19"
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[profile.release]
+# "z" measured 8.65 MB vs 9.2 MB for "s", with the same CPU while playing.
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2

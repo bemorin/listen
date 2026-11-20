@@ -1,0 +1,108 @@
+// Visual tokens shared with the Windows app (src/UiTokens.cs), plus motion curves.
+
+export global T {
+    // Colours
+    out property <color> bg: #141414;
+    out property <color> elevated: #202020;
+    out property <color> hover: #2A2A2A;
+    out property <color> pressed: #323232;
+    out property <color> border: #303030;
+    out property <color> strong-border: #3B3B3B;
+    out property <color> text: #F1F1F1;
+    out property <color> secondary: #D2D2D2;
+    out property <color> icon-muted: #D0D0D0;
+    out property <color> art-text: #D4D4D4;
+    out property <color> muted: #989898;
+    out property <color> time: #B9B9B9;
+    // Neutral accent: the interface is light and glass; colour comes from the artwork.
+    out property <color> accent: #F5F5F7;
+    out property <color> accent-soft: #FFFFFF26;
+    // Toggle glyphs stay white like every other button; a glass disc behind shows "on".
+    out property <color> toggle-off: #F1F1F1;
+    out property <color> toggle-on: #FFFFFF;
+    out property <color> track: #4A4A4A;
+    out property <color> thumb: #DDDDDD;
+    out property <color> panel: #1B1B1B;
+    out property <color> menu-sep: #3A3A3A;
+    out property <color> menu-hover: #2D2D2D;
+    out property <color> menu-pressed: #373737;
+    out property <color> list-hover: #232323;
+    out property <color> list-selected: #2A2A2A;
+    out property <color> tooltip: #242424;
+    out property <color> drop-overlay: #161616EB;
+    out property <color> drop-badge: #FFFFFF14;
+    out property <color> drop-badge-border: #FFFFFF33;
+    out property <color> scroll-thumb: #5E5E5E;
+    out property <color> scroll-thumb-hover: #777777;
+    out property <color> danger: #E5484D;
+
+    // Glass: translucent white over the ambient wash, edged with a faint highlight.
+    out property <color> glass: #FFFFFF0A;
+    out property <color> glass-raised: #FFFFFF10;
+    out property <color> glass-hover: #FFFFFF14;
+    out property <color> glass-pressed: #FFFFFF22;
+    out property <color> hairline: #FFFFFF17;
+    out property <color> hairline-soft: #FFFFFF0D;
+    out property <color> rail: #FFFFFF26;
+    // The play disc: light, with a dark glyph, like a system Now Playing control.
+    out property <color> disc: #EDEDED;
+    out property <color> disc-hover: #FFFFFF;
+    out property <color> disc-pressed: #CFCFCF;
+    out property <color> disc-glyph: #131313;
+    // Ambient colours when the track has no artwork: a quiet warm/cool duotone.
+    out property <color> ambient-warm: #4A2A1A;
+    out property <color> ambient-cool: #182638;
+
+    // Layout (logical pixels), from UiTokens.Layout
+    out property <length> top-bar: 42px;
+    out property <length> seek-row: 38px;      // 12 top margin + 26 slider
+    out property <length> controls-row: 68px;  // 4 + 52 play button + 12
+    out property <length> compact-height: self.top-bar + self.seek-row + self.controls-row;
+    out property <length> title-block: 72px;   // title + subtitle rows of the hero
+    out property <length> hero-min-height: self.compact-height + self.title-block + 18px;
+    out property <length> queue-height: 190px;
+    out property <length> mini-height: 74px;
+    out property <length> full-min-width: 360px;
+    out property <length> volume-slider-min-width: 440px;
+    out property <length> fade-band: 32px;
+    out property <length> artwork-fade-start: 12px;
+    out property <length> artwork: 116px;
+    out property <length> mini-left: 12px;
+    out property <length> mini-tight-left: 4px;
+    out property <length> mini-right: 8px;
+    out property <length> mini-title-min-space: 58px;
+    // Prev 34 + play 40 + next 34 + repeat 24 + expand 24, each with its margins.
+    out property <length> mini-controls: 38px + 44px + 38px + 28px + 27px;
+    out property <length> mini-min-width: self.mini-controls + self.mini-tight-left + self.mini-right;
+
+    // Fonts, chosen per platform by the app (empty = system default).
+    in-out property <string> ui-font;
+    in-out property <string> time-font;
+
+    // Motion
+    out property <duration> quick: 120ms;
+    out property <duration> medium: 220ms;
+    out property <duration> slow: 420ms;
+}
+
+// Motion curves (not visible to the app).
+export global M {
+    out property <easing> spring: cubic-bezier(0.22, 1.18, 0.36, 1);
+    out property <easing> settle: cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+
+// Language (French when the system UI is French).
+export global L {
+    in-out property <bool> fr;
+}
+
+// One tooltip for the whole window, positioned by whichever control is hovered.
+export global Tip {
+    in-out property <string> text;
+    in-out property <length> x;
+    in-out property <length> top;
+    in-out property <length> bottom;
+    in-out property <bool> shown;
+    in-out property <int> owner;
+    in-out property <int> next-owner: 1;
+}
