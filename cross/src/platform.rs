@@ -208,21 +208,12 @@ pub fn style_window(_w: &Window) {
                 4,
             );
         }
-        // Freshly exposed pixels of a growing window are painted with the class brush until
-        // Listen draws them: make it the app's background, and repaint only the new strip
-        // (no CS_HREDRAW/CS_VREDRAW, which would erase the whole window on every step).
-        unsafe {
-            use windows_sys::Win32::Graphics::Gdi::CreateSolidBrush;
-            use windows_sys::Win32::UI::WindowsAndMessaging::{
-                GetClassLongPtrW, SetClassLongPtrW, CS_HREDRAW, CS_VREDRAW, GCLP_HBRBACKGROUND, GCL_STYLE,
-            };
-            let style = GetClassLongPtrW(hwnd as _, GCL_STYLE) as u32;
-            SetClassLongPtrW(hwnd as _, GCL_STYLE, (style & !(CS_HREDRAW | CS_VREDRAW)) as isize);
-            let brush = CreateSolidBrush(0x0014_1414);
-            if !brush.is_null() {
-                SetClassLongPtrW(hwnd as _, GCLP_HBRBACKGROUND, brush as isize);
-            }
-        }
+        // Background erasing, done by hand. winit lets Windows erase the background *after*
+        // Listen has drawn a frame (DefWindowProc on WM_PAINT), so any erase brush wipes fresh
+        // content (a flash, e.g. when always-on-top changes). With none, the strip a growing
+        // window exposes stays unpainted until the next frame. So: never erase, and fill only
+        // the newly exposed strip, at resize time, before the compositor shows it.
+        unsafe { erase::install(hwnd as _) };
     }
 }
 
@@ -297,5 +288,84 @@ mod tests {
         };
         let r = place(cur, 500.0, 410.0, AREA, 16.0);
         assert_eq!(r.right(), 1920.0);
+    }
+}
+
+#[cfg(windows)]
+mod erase {
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+    use windows_sys::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject, FillRect, GetDC, GetPixel, ReleaseDC, HDC};
+    use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetClassLongPtrW, GetClientRect, SetClassLongPtrW, CS_HREDRAW, CS_VREDRAW, GCL_STYLE, WM_ERASEBKGND,
+        WM_NCDESTROY, WM_SIZE,
+    };
+
+    /// The app's background (#141414), when the window's own edge cannot be sampled.
+    const BACKGROUND: u32 = 0x0014_1414;
+
+    struct State {
+        width: i32,
+        height: i32,
+    }
+
+    /// Fills `rect` with the colour of the window's current edge at `(x, y)`, so the strip
+    /// blends with what is already on screen until Listen draws it.
+    unsafe fn fill_like(dc: HDC, rect: RECT, x: i32, y: i32) {
+        let sampled = GetPixel(dc, x.max(0), y.max(0));
+        let colour = if sampled == u32::MAX { BACKGROUND } else { sampled };
+        let brush = CreateSolidBrush(colour);
+        if !brush.is_null() {
+            FillRect(dc, &rect, brush);
+            DeleteObject(brush as _);
+        }
+    }
+
+    pub unsafe fn install(hwnd: HWND) {
+        // Resizes must not invalidate (and so repaint) the whole window.
+        let style = GetClassLongPtrW(hwnd, GCL_STYLE) as u32;
+        SetClassLongPtrW(hwnd, GCL_STYLE, (style & !(CS_HREDRAW | CS_VREDRAW)) as isize);
+        let mut rc: RECT = std::mem::zeroed();
+        GetClientRect(hwnd, &mut rc);
+        let state = Box::new(State { width: rc.right, height: rc.bottom });
+        SetWindowSubclass(hwnd, Some(proc), 0x4C53, Box::into_raw(state) as usize);
+    }
+
+    unsafe extern "system" fn proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        _id: usize,
+        data: usize,
+    ) -> LRESULT {
+        let state = &mut *(data as *mut State);
+        match msg {
+            WM_ERASEBKGND => return 1,
+            WM_SIZE => {
+                let (w, h) = ((lparam & 0xFFFF) as i32, ((lparam >> 16) & 0xFFFF) as i32);
+                if w > state.width || h > state.height {
+                    let dc = GetDC(hwnd);
+                    if !dc.is_null() {
+                        if w > state.width {
+                            let rect = RECT { left: state.width, top: 0, right: w, bottom: h };
+                            fill_like(dc, rect, state.width - 2, state.height / 2);
+                        }
+                        if h > state.height {
+                            let rect = RECT { left: 0, top: state.height, right: w, bottom: h };
+                            fill_like(dc, rect, state.width / 2, state.height - 2);
+                        }
+                        ReleaseDC(hwnd, dc);
+                    }
+                }
+                state.width = w;
+                state.height = h;
+            }
+            WM_NCDESTROY => {
+                drop(Box::from_raw(data as *mut State));
+            }
+            _ => {}
+        }
+        DefSubclassProc(hwnd, msg, wparam, lparam)
     }
 }

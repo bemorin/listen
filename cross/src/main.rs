@@ -1552,6 +1552,10 @@ fn main() -> Result<(), slint::PlatformError> {
                     "next" => a.next(false),
                     "prev" => a.previous(),
                     "repeat" => a.cycle_repeat(),
+                    "topmost" => {
+                        a.state.always_on_top = !a.state.always_on_top;
+                        a.ui().set_topmost(a.state.always_on_top);
+                    }
                     "seek" => a.seek_fraction(args.first().copied().unwrap_or(0.0) as f32),
                     "size" if args.len() == 2 => {
                         let s = a.scale();
