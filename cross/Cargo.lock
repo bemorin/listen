@@ -2570,6 +2570,7 @@ dependencies = [
  "symphonia",
  "sys-locale",
  "tiny-skia 0.12.0",
+ "windows",
  "windows-sys 0.61.2",
  "winresource",
 ]

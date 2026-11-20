@@ -28,6 +28,9 @@ tiny-skia = { version = "0.12", default-features = false, features = ["std", "si
 rfd = { version = "0.18", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
+# Already in the binary through souvlaki; the system media API forwards media keys to
+# another player when Listen holds them but is not playing.
+windows = { version = "0.62", features = ["Media_Control", "Foundation", "Foundation_Collections"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell"] }
 
 [build-dependencies]

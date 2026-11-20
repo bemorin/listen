@@ -138,6 +138,11 @@ impl Engine {
         self.paused_since = Some(Instant::now());
     }
 
+    /// How long playback has been paused, if it is.
+    pub fn paused_for(&self) -> Option<Duration> {
+        self.paused_since.map(|t| t.elapsed())
+    }
+
     pub fn position(&self) -> Duration {
         match (&self.player, self.parked_at) {
             (Some(p), _) => p.get_pos(),
