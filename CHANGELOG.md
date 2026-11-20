@@ -2,7 +2,7 @@
 
 This changelog tracks **public GitHub releases of Listen**. Internal development iterations before the first public release are intentionally not listed.
 
-## Unreleased
+## 1.1.0
 
 - Smooth, flicker-free transitions between the full player, the mini player and the play queue.
 - Expanding the mini player near a screen edge opens upward or sideways so the window stays on screen; collapsing returns to the same spot.
