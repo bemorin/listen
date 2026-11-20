@@ -71,10 +71,11 @@ Useful during development:
 
 ```sh
 cargo test                      # unit tests (names, placement, persistence)
+cargo build --release --features test-hooks   # release build that also honours the test hooks below
 LISTEN_DATA_DIR=/tmp/listen cargo run -- song.flac other.mp3
 ```
 
-`LISTEN_DATA_DIR` keeps test state away from your real settings.
+`LISTEN_DATA_DIR` keeps test state away from your real settings. In debug builds, or with `--features test-hooks`, `LISTEN_SILENT=1` mutes the output and `LISTEN_DEBUG_CMDS=<file>` drives the app from a command file (`mini`, `queue`, `play`, `next`, `prev`, `seek 0.5`, `size 500 300`), without synthetic input.
 
 GitHub Actions (`.github/workflows/cross.yml`) builds and tests Windows x64, macOS arm64, macOS x64 and Linux x64. It uploads one artifact per platform.
 
@@ -146,7 +147,7 @@ Apple-grade polish, without new weight:
 - **Menu.** The "more" menu shows keyboard shortcuts. Its rows compress to fit a short window.
 - **Tooltips** use one shared, delayed tooltip with a fade. They flip below the control when there is no room above.
 - **Artwork you meant.** Blank `Folder.jpg` placeholders, such as those Windows Media Player leaves behind, are ignored. Artwork embedded in a file is always shown.
-- **No white flash on Windows.** When the window grows, Windows paints the new area with the window class's brush before Listen draws it. That brush is set to the app's background colour.
+- **No flash when the window grows (Windows).** Slint creates its windows transparent by default. On Windows, every pixel not yet painted was then see-through, so the strip a growing window exposed showed whatever was behind it, often as a white flash. Listen's window is opaque. Its class brush is the app background, and only the new strip is repainted, not the whole window. Measured over eight queue and mini transitions: no frame showed it. The system border is off too, because its 1 px line showed as a light sliver in the rounded corners.
 - **Lightness by design.** The audio device opens on Play and closes after 20 s of pause. While playing, the window redraws only as often as the progress bar needs to glide. Paused, nothing redraws.
 
 ## Feature gaps and differences

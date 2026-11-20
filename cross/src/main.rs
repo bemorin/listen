@@ -1250,7 +1250,12 @@ fn main() -> Result<(), slint::PlatformError> {
         .backend_name("winit".into())
         .renderer_name("software".into())
         .with_winit_window_attributes_hook(move |attrs| {
-            let mut attrs = attrs.with_inner_size(winit::dpi::LogicalSize::new(start_w, start_h));
+            // Opaque: Slint asks for a transparent window by default, which on Windows turns
+            // every not-yet-painted pixel see-through (the strip a growing window exposes
+            // showed whatever was behind it, like a white flash).
+            let mut attrs = attrs
+                .with_transparent(false)
+                .with_inner_size(winit::dpi::LogicalSize::new(start_w, start_h));
             if let Some((x, y)) = position {
                 attrs = attrs.with_position(winit::dpi::PhysicalPosition::new(x, y));
             }
@@ -1526,7 +1531,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // Debug builds only: drive the app from a command file (one command per line), so it can
     // be exercised without synthetic keyboard or mouse input.
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, feature = "test-hooks"))]
     let _debug_cmds = std::env::var_os("LISTEN_DEBUG_CMDS").map(|path| {
         let path = PathBuf::from(path);
         let timer = slint::Timer::default();

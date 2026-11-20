@@ -10,6 +10,9 @@ publish = false
 default = []
 # Screen-reader support (AccessKit). Off by default: it adds a thread and several MB of memory.
 accessibility = ["slint/accessibility"]
+# Test hooks in release builds: LISTEN_DEBUG_CMDS (drive the app from a command file) and
+# LISTEN_SILENT (no audio output). Always on in debug builds.
+test-hooks = []
 
 [dependencies]
 slint = { version = "1.19", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-software", "unstable-winit-030"] }

@@ -198,7 +198,9 @@ pub fn style_window(_w: &Window) {
                 &dark as *const _ as _,
                 4,
             );
-            let border: u32 = 0x002C_2C2C; // COLORREF 0x00BBGGRR: a hairline a shade above the background.
+            // No system border: its 1 px line showed as a light sliver in the rounded corners.
+            // The window's own shadow already separates it from what is behind.
+            let border: u32 = DWMWA_COLOR_NONE;
             DwmSetWindowAttribute(
                 hwnd as _,
                 DWMWA_BORDER_COLOR as u32,
@@ -206,11 +208,16 @@ pub fn style_window(_w: &Window) {
                 4,
             );
         }
-        // When the window grows, Windows paints the newly exposed strip with the class brush
-        // before Listen draws it. Make that brush the app's own background, not white.
+        // Freshly exposed pixels of a growing window are painted with the class brush until
+        // Listen draws them: make it the app's background, and repaint only the new strip
+        // (no CS_HREDRAW/CS_VREDRAW, which would erase the whole window on every step).
         unsafe {
             use windows_sys::Win32::Graphics::Gdi::CreateSolidBrush;
-            use windows_sys::Win32::UI::WindowsAndMessaging::{SetClassLongPtrW, GCLP_HBRBACKGROUND};
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                GetClassLongPtrW, SetClassLongPtrW, CS_HREDRAW, CS_VREDRAW, GCLP_HBRBACKGROUND, GCL_STYLE,
+            };
+            let style = GetClassLongPtrW(hwnd as _, GCL_STYLE) as u32;
+            SetClassLongPtrW(hwnd as _, GCL_STYLE, (style & !(CS_HREDRAW | CS_VREDRAW)) as isize);
             let brush = CreateSolidBrush(0x0014_1414);
             if !brush.is_null() {
                 SetClassLongPtrW(hwnd as _, GCLP_HBRBACKGROUND, brush as isize);
