@@ -29,6 +29,13 @@ rfd = { version = "0.18", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell"] }
+# Remote mode (src/remote): the system's media sessions. Same crate and version souvlaki uses.
+windows = { version = "0.62", features = ["ApplicationModel", "Foundation", "Media_Control", "Storage_Streams"] }
+windows-future = "0.3"
+
+# Remote mode on Linux: MPRIS over D-Bus, with the libdbus binding souvlaki already links.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+dbus = "0.9"
 
 [build-dependencies]
 slint-build = "1.19"

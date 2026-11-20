@@ -49,6 +49,8 @@ pub struct AppState {
     pub repeat: Repeat,
     /// Show the remaining time instead of the duration.
     pub show_remaining: bool,
+    /// Remote mode: with nothing of its own playing, show and drive what another app plays.
+    pub remote: bool,
     pub queue: Vec<PathBuf>,
     pub current: Option<usize>,
 }
@@ -64,6 +66,7 @@ impl Default for AppState {
             mini_width: 390.0,
             repeat: Repeat::Off,
             show_remaining: false,
+            remote: true,
             queue: Vec::new(),
             current: None,
         }
@@ -138,6 +141,7 @@ impl AppState {
                     "loopmode" => s.repeat = Repeat::from_i32(v.parse().unwrap_or(0)),
                     "current" => s.current = v.parse().ok(),
                     "remaining" => s.show_remaining = v == "1",
+                    "remote" => s.remote = v != "0",
                     _ => {}
                 }
             }
@@ -182,6 +186,7 @@ impl AppState {
         settings.push_str(&format!("miniWidth={:.0}\n", self.mini_width));
         settings.push_str(&format!("loopMode={}\n", self.repeat as i32));
         settings.push_str(&format!("remaining={}\n", self.show_remaining as u8));
+        settings.push_str(&format!("remote={}\n", self.remote as u8));
         if let Some(c) = self.current {
             settings.push_str(&format!("current={c}\n"));
         }

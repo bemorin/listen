@@ -41,6 +41,7 @@ The rest of the stack:
 
 - **Decoding:** [symphonia](https://github.com/pdeljanov/Symphonia), in pure Rust, through [rodio](https://github.com/RustAudio/rodio) (cpal output). The same decoders run on every OS, with no system codecs.
 - **Media keys and OS media panel:** [souvlaki](https://github.com/Sinono3/souvlaki). It uses System Media Transport Controls on Windows, MPRIS (D-Bus) on Linux, and Now Playing on macOS.
+- **Other apps' playback (remote mode):** the `windows` crate's `Windows.Media.Control` on Windows (same crate and version souvlaki uses) and the `dbus` crate on Linux (the libdbus binding souvlaki already links). See [Remote mode](#remote-mode-other-apps-playback).
 - **File dialog:** [rfd](https://github.com/PolyMeilex/rfd) on Windows and macOS (native dialogs). On Linux it shells out to `zenity` or `kdialog`, so Listen links no GUI toolkit.
 
 ## Measured footprint (Windows 11 x64, release build)
@@ -92,6 +93,7 @@ LISTEN_DATA_DIR=/tmp/listen cargo run -- song.flac other.mp3
 - `LISTEN_DEBUG_CMDS=<file>` drives the app from a command file (`mini`, `queue`, `play`, `next`, `prev`, `repeat`, `topmost`, `seek 0.5`, `size 500 300`), without synthetic input.
 - `LISTEN_PAINT_LOG=<file>` logs the duration and size of every frame (Windows).
 - `LISTEN_AMBIENT=0|1|2` turns the ambient wash and the grain off for measurements.
+- `LISTEN_REMOTE_LOG=<file>` logs every update the remote-mode backend reports. The command file also takes `remote` (toggle the mode), `add <file>` (enqueue without playing) and `playat <n>`; `play`, `next`, `prev` and `seek` go to the mirrored app while it is shown.
 
 GitHub Actions (`.github/workflows/cross.yml`) builds and tests Windows x64, macOS arm64, macOS x64 and Linux x64. It uploads one artifact per platform.
 
@@ -172,6 +174,39 @@ Apple-grade polish, without new weight:
 - **No flash when the window grows (Windows).** Two causes, both fixed. First, Slint creates its windows transparent by default, so on Windows every pixel not yet painted was see-through: the strip a growing window exposed showed whatever was behind it, often as a white flash. Listen's window is opaque. Second, winit lets Windows erase the background *after* each frame is drawn, which wiped fresh content (the buttons) whenever an erase brush applied. Listen now intercepts background erasing (`platform::erase`). It never erases, and at resize time it fills only the newly exposed strip, with the colour of the window's current edge, until the next frame covers it. Measured frame by frame over queue, mini and always-on-top transitions: no white or flat frames remain. The system border is off too, because its 1 px line showed as a light sliver in the rounded corners.
 - **Lightness by design.** The audio device opens on Play and closes after 20 s of pause. While playing, the window redraws only as often as the progress bar needs to glide. Paused, nothing redraws.
 
+## Remote mode (other apps' playback)
+
+When Listen plays nothing of its own, it shows and drives what another app is playing: Spotify, a browser tab, any app that publishes a system media session. The title, artist, artwork, progress, play/pause, previous/next and seeking all use Listen's own interface. The artwork tints the window as Listen's own covers do.
+
+- **What it reads.** On Windows, the Global System Media Transport Controls (`Windows.Media.Control`): the sessions behind the volume flyout's media panel. Listen follows the session Windows shows. Listen's own session is never mirrored, and when Windows' current session is Listen's, Listen picks another app's session, preferring one that plays. On Linux, MPRIS over D-Bus: the player that plays, else the last one followed, else any. Listen's own `org.mpris.MediaPlayer2.listen` is skipped.
+- **Clear about whose music it is.** A glass pill beside the wordmark names the app ("Spotify"; packaged apps give their own display name, so the Claude desktop app's browser pane reads "Claude"). Its tooltip reads "Playing in Spotify". In the compact layout the name follows the artist; in the mini player it follows the title. Listen's volume and repeat controls don't apply to another app, so they dim or fade out while mirroring. Previous and next dim when the app can't skip.
+- **Local playback always wins.** Playing a track from the queue takes the window back at once. Pausing it hands the window to another app that is still playing. When both are paused, the window stays on whichever it showed last, so Play resumes what you see. With an empty queue, a paused session stays on screen.
+- **A setting.** "Follow other apps" in the "more" menu turns the mode off (`remote=0` in `cross-settings.ini`). Off, the backend is dropped: it unsubscribes from the OS and its thread ends. On macOS the item is not shown.
+- **Light by construction.** No polling. One thread per backend sleeps until the OS reports a change. On Windows that is session, media-property, playback and timeline events. On Linux it is `NameOwnerChanged`, `PropertiesChanged` and `Seeked` signals on a blocking D-Bus connection. A burst of events is coalesced into one read. Artwork is decoded once per track, off the UI thread, into the same 256 px image the local player uses. Between events the progress bar is extrapolated from the last reported position with the same local clock as local playback. MPRIS never signals the position, so it is read when the state changes.
+
+### Measured cost (Windows 11 x64, release build)
+
+Same machine and method as above: private working set (`bench/measure.ps1`'s counter), CPU as process time over 15–30 s, empty queue. The mirrored app was a browser tab (Chromium, in the Claude desktop app's browser pane) playing a 3-minute track with Media Session metadata and a 400 px cover.
+
+| | Before (no remote mode) | Remote mode off | Remote mode on |
+| --- | --- | --- | --- |
+| Binary | 8,726,016 bytes | 8,776,192 bytes (+49 KB, +0.6 %) | same |
+| Memory, idle, nothing playing anywhere | 4.7–4.8 MB | 4.7–4.8 MB | **5.6–5.7 MB** |
+| CPU, idle | 0.00 % | 0.00 % | 0.00 % (no wake-ups) |
+| Mirroring a playing tab, full player | – | – | **5.5–5.7 MB, 1.2–3.0 %** of one core |
+| Mirroring a playing tab, mini player | – | – | **4.0–4.2 MB, 0.2–0.8 %** |
+| Threads | 10 | 10 | 12–15 (the backend's thread, plus the system thread pool that delivers WinRT events) |
+
+- The +0.9 MB with the mode on is the Windows media-session runtime that `GlobalSystemMediaTransportControlsSessionManager` loads, plus the sleeping thread. It is paid even when nothing plays, and is the price of being told about changes rather than asking. Turning the mode off gives back exactly the previous footprint.
+- While mirroring, CPU is the progress bar's glide, the same budget as local playback (1.8 % full, 1.4 % mini above). The backend itself reported nothing between user actions during steady playback (checked with `LISTEN_REMOTE_LOG`). Idle CPU readings on this machine are noisy, and single runs of every build, the old one included, reached 0.6–4 % from unrelated load. The table gives the quiet runs.
+- Linux was not measured. The MPRIS client was exercised in WSL against a scripted MPRIS player on a private session bus: metadata, artist lists, `file://` artwork, play/pause, next, seek through `SetPosition`, the `Seeked` signal, and shutdown. CI builds and tests it.
+
+### Platform notes
+
+- **Windows.** Seeking needs the app to publish its timeline. Browsers do once a page calls `navigator.mediaSession.setPositionState` (YouTube and most players do). Without one, the time reads 00:00 and the seek bar is disabled. Between reports the position is extrapolated, so an app that loops a track without reporting again shows the bar resting at the end. App names come from Windows for packaged apps (Spotify from the Store, Claude) and are tidied from the app id otherwise ("Chrome", "MSEdge" → "Edge", "Spotify.exe" → "Spotify").
+- **Linux.** Only local artwork (`file://`) is shown. Spotify and browsers publish `https://` artwork URLs, and fetching those would put an HTTP and TLS stack into Listen, so those players show the placeholder and the quiet duotone.
+- **macOS: not supported, on purpose.** macOS has no public API to read or control another app's playback. The only route is the private MediaRemote framework, and since macOS 15.4 its "now playing" calls answer only Apple-entitled processes. Today's workarounds load the framework through a system binary (for example a `perl` helper) to borrow its entitlement. That is a private-API hack that Apple can break in any update, and it does not belong in a signed, notarised app. So remote mode is absent on macOS and its menu item is hidden. Listen still publishes its own playback to Now Playing through souvlaki. Should Apple ever open a public API, `src/remote` has a backend slot ready.
+
 ## Feature gaps and differences
 
 - **WMA is not supported.** No open-source WMA decoder exists in pure Rust (symphonia has none). Supporting WMA would mean Windows-only Media Foundation code, or bundling FFmpeg (tens of MB). `.wma` files are ignored when added.
@@ -203,6 +238,7 @@ cross/
   src/state.rs           persisted settings and queue
   src/platform.rs        work area, atomic move+resize, placement rules, Windows corners
   src/media.rs           media keys and OS media panel (souvlaki)
+  src/remote/            remote mode: other apps' playback (mod.rs; windows.rs GSMTC; linux.rs MPRIS)
   src/dialogs.rs         "Add audio files" dialog
   src/wordmark.rs        the "listen" wordmark, rendered at pixel size
   bench/                 hello-window comparison and the memory measurement script

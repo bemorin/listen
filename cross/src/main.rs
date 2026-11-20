@@ -5,6 +5,7 @@ mod dialogs;
 mod media;
 mod meta;
 mod platform;
+mod remote;
 mod state;
 mod wordmark;
 
@@ -93,6 +94,58 @@ enum Launch {
     Enqueue,
 }
 
+/// What another app plays, as last reported by the remote backend (see `remote`).
+struct RemoteView {
+    session: u64,
+    /// The app's name; `None`: nothing to mirror.
+    source: Option<String>,
+    title: String,
+    artist: String,
+    track: u64,
+    art: Option<(slint::Image, [u8; 3], [[u8; 3]; 2])>,
+    playing: bool,
+    can_prev: bool,
+    can_next: bool,
+    can_seek: bool,
+    /// `position` was true at `at`; it advances from there while playing.
+    position: Duration,
+    duration: Option<Duration>,
+    at: Instant,
+}
+
+impl Default for RemoteView {
+    fn default() -> Self {
+        RemoteView {
+            session: 0,
+            source: None,
+            title: String::new(),
+            artist: String::new(),
+            track: 0,
+            art: None,
+            playing: false,
+            can_prev: true,
+            can_next: true,
+            can_seek: false,
+            position: Duration::ZERO,
+            duration: None,
+            at: Instant::now(),
+        }
+    }
+}
+
+impl RemoteView {
+    fn position_now(&self) -> Duration {
+        let mut p = self.position;
+        if self.playing {
+            p += self.at.elapsed();
+        }
+        match self.duration {
+            Some(d) => p.min(d),
+            None => p,
+        }
+    }
+}
+
 struct App {
     ui: slint::Weak<AppWindow>,
     state: AppState,
@@ -128,6 +181,13 @@ struct App {
     dpi_change_until: Option<Instant>,
     last_morph_step: Instant,
     ambient_colours: Option<([u8; 3], [u8; 3])>,
+
+    // Remote mode: another app's playback, shown while Listen plays nothing of its own.
+    remote: Option<remote::Remote>,
+    rv: RemoteView,
+    showing_remote: bool,
+    /// The remote view drew over the local track: switching back must show it again.
+    local_dirty: bool,
 }
 
 thread_local! {
@@ -194,7 +254,7 @@ impl App {
             }
         }
         let ui = self.ui();
-        ui.set_current_index(self.state.current.map(|i| i as i32).unwrap_or(-1));
+        ui.set_current_index(self.local_current_index());
         let sel = ui.get_selected_index();
         if sel >= self.state.queue.len() as i32 {
             ui.set_selected_index(self.state.queue.len() as i32 - 1);
@@ -267,6 +327,22 @@ impl App {
         let ui = self.ui();
         self.generation += 1;
         self.current_meta = None;
+        if self.showing_remote {
+            // The other app stays on screen; the local track is shown when it comes back.
+            self.local_dirty = true;
+            let names = self.current_path().map(|p| meta::display_names(p, None));
+            if let Some(m) = &mut self.media {
+                match names {
+                    Some((title, subtitle)) => m.set_track(&title, &subtitle, "", None, None),
+                    None => {
+                        m.set_track("", "", "", None, None);
+                        m.set_playback(false, false, Duration::ZERO, true);
+                    }
+                }
+            }
+            return;
+        }
+        self.local_dirty = false;
         // The previous artwork stays until the new track's arrives (or is known to be absent),
         // so a track change cross-fades instead of flashing the placeholder.
         match self.current_path().cloned() {
@@ -327,18 +403,26 @@ impl App {
         }
         self.state.current = Some(index);
         let path = self.state.queue[index].clone();
+        if autoplay {
+            self.leave_remote();
+        }
         self.show_track();
         let ui = self.ui();
+        // While another app is mirrored, its view stays untouched (`show_local` restores ours).
+        let local = !self.showing_remote;
         match self.engine.load(&path) {
             Ok(d) => {
-                ui.set_can_seek(true);
-                if let Some(d) = d {
-                    ui.set_duration_secs(d.as_secs_f32());
+                if local {
+                    ui.set_can_seek(true);
+                    if let Some(d) = d {
+                        ui.set_duration_secs(d.as_secs_f32());
+                    }
                 }
                 if autoplay {
                     let _ = self.engine.play();
                 }
             }
+            Err(_) if !local => {}
             Err(_) => {
                 ui.set_can_seek(false);
                 ui.set_track_subtitle(
@@ -351,7 +435,9 @@ impl App {
                 );
             }
         }
-        ui.set_position_secs(0.0);
+        if local {
+            ui.set_position_secs(0.0);
+        }
         self.refresh_queue();
         ui.set_selected_index(index as i32);
         self.sync_playback();
@@ -432,8 +518,10 @@ impl App {
         // Natural end of the queue: stop on the last frame.
         self.engine.pause();
         self.sync_playback();
-        let ui = self.ui();
-        ui.set_position_secs(ui.get_duration_secs());
+        if !self.showing_remote {
+            let ui = self.ui();
+            ui.set_position_secs(ui.get_duration_secs());
+        }
     }
 
     fn cycle_repeat(&mut self) {
@@ -575,9 +663,10 @@ impl App {
     }
 
     fn sync_playback(&mut self) {
+        self.choose_view();
         let playing = self.engine.is_playing();
         let ui = self.ui();
-        ui.set_playing(playing);
+        ui.set_playing(if self.showing_remote { self.rv.playing } else { playing });
         self.retime_progress();
         let has = self.state.current.is_some();
         let pos = self.engine.position();
@@ -598,6 +687,10 @@ impl App {
     /// Publishes the playback position. A local clock, re-anchored on the audio clock when
     /// they drift apart, keeps the motion even between the device's buffer-sized steps.
     fn tick_position(&self) {
+        if self.showing_remote {
+            self.tick_remote_position();
+            return;
+        }
         if !self.engine.is_loaded() {
             return;
         }
@@ -635,7 +728,8 @@ impl App {
     /// sixth of a pixel per frame, between 10 and 30 frames a second (16 with the queue's bars
     /// moving). A song of a few minutes needs about 11 redraws a second.
     fn retime_progress(&self) {
-        if !self.engine.is_playing() {
+        let playing = if self.showing_remote { self.rv.playing } else { self.engine.is_playing() };
+        if !playing {
             self.progress_timer.stop();
             self.progress_interval.set(Duration::ZERO);
             self.clock_anchor.set(None);
@@ -706,7 +800,7 @@ impl App {
                         if self.current_path() == Some(&p) {
                             self.engine.set_duration_hint(d);
                             let ui = self.ui();
-                            if ui.get_duration_secs() <= 0.0 {
+                            if !self.showing_remote && ui.get_duration_secs() <= 0.0 {
                                 ui.set_duration_secs(d.as_secs_f32());
                             }
                         }
@@ -716,23 +810,18 @@ impl App {
                     if gen != self.generation {
                         continue;
                     }
-                    let ui = self.ui();
                     let mut cover_url = None;
+                    if !self.showing_remote {
+                        let image = art.as_ref().map(|a| {
+                            let buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+                                &a.rgba, a.size, a.size,
+                            );
+                            (slint::Image::from_rgba8(buf), a.tint, a.glow)
+                        });
+                        self.apply_artwork(image.as_ref());
+                    }
                     if let Some(a) = &art {
-                        let buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
-                            &a.rgba, a.size, a.size,
-                        );
-                        ui.set_artwork(slint::Image::from_rgba8(buf));
-                        ui.set_tint(slint::Color::from_rgb_u8(a.tint[0], a.tint[1], a.tint[2]));
-                        let [ga, gb] = a.glow;
-                        ui.set_tint_a(slint::Color::from_rgb_u8(ga[0], ga[1], ga[2]));
-                        ui.set_tint_b(slint::Color::from_rgb_u8(gb[0], gb[1], gb[2]));
-                        self.set_ambient(ga, gb);
-                        ui.set_has_artwork(true);
                         cover_url = self.write_cover(a);
-                    } else {
-                        ui.set_has_artwork(false);
-                        self.set_default_ambient();
                     }
                     if let (Some(url), Some(path)) = (cover_url, self.current_path().cloned()) {
                         let (title, subtitle) = meta::display_names(&path, self.current_meta.as_ref());
@@ -752,13 +841,16 @@ impl App {
                     };
                     let ui = self.ui();
                     let (title, subtitle) = meta::display_names(&path, m.as_ref());
-                    ui.set_track_title(title.as_str().into());
-                    if ui.get_can_seek() || !self.engine.is_loaded() {
-                        ui.set_track_subtitle(subtitle.as_str().into());
+                    let local = !self.showing_remote;
+                    if local {
+                        ui.set_track_title(title.as_str().into());
+                        if ui.get_can_seek() || !self.engine.is_loaded() {
+                            ui.set_track_subtitle(subtitle.as_str().into());
+                        }
                     }
                     if let Some(d) = m.as_ref().and_then(|m| m.duration) {
                         self.engine.set_duration_hint(d);
-                        if ui.get_duration_secs() <= 0.0 {
+                        if local && ui.get_duration_secs() <= 0.0 {
                             ui.set_duration_secs(d.as_secs_f32());
                         }
                     }
@@ -1189,6 +1281,7 @@ impl App {
             self.state.mini = true;
         }
         self.save();
+        self.remote = None;
         self.engine.unload();
         if let Some(p) = &self.cover_file {
             let _ = std::fs::remove_file(p);
@@ -1356,6 +1449,7 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         ui.set_frameless(false);
         ui.set_mac(true);
+        ui.set_remote_available(false);
     }
 
     let (job_tx, job_rx) = mpsc::channel();
@@ -1367,6 +1461,7 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.set_volume(state.volume);
     ui.set_repeat_mode(state.repeat as i32);
     ui.set_show_remaining(state.show_remaining);
+    ui.set_remote_mode(state.remote);
     ui.set_topmost(state.always_on_top);
     ui.set_queue_open(state.queue_visible);
     if state.queue_visible {
@@ -1406,6 +1501,10 @@ fn main() -> Result<(), slint::PlatformError> {
         dpi_change_until: None,
         last_morph_step: Instant::now(),
         ambient_colours: None,
+        remote: None,
+        rv: RemoteView::default(),
+        showing_remote: false,
+        local_dirty: false,
     }));
     APP.with(|a| *a.borrow_mut() = Some(app.clone()));
 
@@ -1437,12 +1536,14 @@ fn main() -> Result<(), slint::PlatformError> {
             ui.$setter(move |$($arg),*| with_app(|$app| $body));
         };
     }
-    on!(on_toggle_play, |a| a.toggle_play());
-    on!(on_previous, |a| a.previous());
-    on!(on_next, |a| a.next(false));
+    // Transport goes to the mirrored app while it is on screen (remote mode).
+    on!(on_toggle_play, |a| if !a.remote_command(remote::Cmd::Toggle) { a.toggle_play() });
+    on!(on_previous, |a| if !a.remote_command(remote::Cmd::Previous) { a.previous() });
+    on!(on_next, |a| if !a.remote_command(remote::Cmd::Next) { a.next(false) });
     on!(on_cycle_repeat, |a| a.cycle_repeat());
-    on!(on_seek, |a, f| a.seek_fraction(f));
-    on!(on_nudge, |a, s| a.nudge(s as f64));
+    on!(on_seek, |a, f| if !a.remote_seek_fraction(f) { a.seek_fraction(f) });
+    on!(on_nudge, |a, s| if !a.remote_nudge(s as f64) { a.nudge(s as f64) });
+    on!(on_toggle_remote_mode, |a| a.toggle_remote_mode());
     on!(on_set_volume, |a, v| {
         a.set_volume(v);
         a.save();
@@ -1595,6 +1696,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 })
             };
             a.show_track_media();
+            a.start_remote();
             a.started = true;
             if let Some(b) = a.bounds() {
                 let s = a.scale();
@@ -1627,15 +1729,38 @@ fn main() -> Result<(), slint::PlatformError> {
                 with_app(|a| match cmd {
                     "mini" => a.toggle_mini(),
                     "queue" => a.toggle_queue(),
-                    "play" => a.toggle_play(),
-                    "next" => a.next(false),
-                    "prev" => a.previous(),
+                    "play" => {
+                        if !a.remote_command(remote::Cmd::Toggle) {
+                            a.toggle_play()
+                        }
+                    }
+                    "next" => {
+                        if !a.remote_command(remote::Cmd::Next) {
+                            a.next(false)
+                        }
+                    }
+                    "prev" => {
+                        if !a.remote_command(remote::Cmd::Previous) {
+                            a.previous()
+                        }
+                    }
+                    "remote" => a.toggle_remote_mode(),
                     "repeat" => a.cycle_repeat(),
                     "topmost" => {
                         a.state.always_on_top = !a.state.always_on_top;
                         a.ui().set_topmost(a.state.always_on_top);
                     }
-                    "seek" => a.seek_fraction(args.first().copied().unwrap_or(0.0) as f32),
+                    "seek" => {
+                        let f = args.first().copied().unwrap_or(0.0) as f32;
+                        if !a.remote_seek_fraction(f) {
+                            a.seek_fraction(f)
+                        }
+                    }
+                    "add" => {
+                        let files = line.split_once(' ').map(|(_, f)| vec![PathBuf::from(f.trim())]).unwrap_or_default();
+                        a.apply_launch(files, Launch::Enqueue, false);
+                    }
+                    "playat" => a.play_index(args.first().copied().unwrap_or(0.0) as usize),
                     "size" if args.len() == 2 => {
                         let s = a.scale();
                         if let Some(b) = a.bounds() {
@@ -1668,5 +1793,283 @@ impl App {
             m.set_track(&title, &subtitle, "", duration, None);
         }
         self.sync_playback_force();
+    }
+}
+
+// ----- Remote mode -------------------------------------------------------------------
+//
+// With nothing of its own playing, Listen shows and drives what another app plays. Local
+// playback always wins: playing a track of the queue takes the screen back at once. When both
+// are paused, the screen stays on whichever was shown last, so Play resumes what you see.
+
+impl App {
+    fn start_remote(&mut self) {
+        if self.remote.is_some() || !self.state.remote {
+            return;
+        }
+        // Test hook: LISTEN_REMOTE_LOG=<file> logs what the backend reports.
+        #[cfg(any(debug_assertions, feature = "test-hooks"))]
+        let log = std::env::var_os("LISTEN_REMOTE_LOG").map(PathBuf::from);
+        self.remote = remote::Remote::start(move |update| {
+            #[cfg(any(debug_assertions, feature = "test-hooks"))]
+            if let Some(path) = &log {
+                use std::io::Write;
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                    let _ = writeln!(f, "{}", update.describe());
+                }
+            }
+            let _ = slint::invoke_from_event_loop(move || with_app(|a| a.on_remote(update)));
+        });
+    }
+
+    fn toggle_remote_mode(&mut self) {
+        self.state.remote = !self.state.remote;
+        self.ui().set_remote_mode(self.state.remote);
+        if self.state.remote {
+            self.start_remote();
+        } else {
+            // Unsubscribes from the OS and ends the backend's thread.
+            self.remote = None;
+            self.rv = RemoteView::default();
+            self.sync_playback();
+        }
+        self.save();
+    }
+
+    fn local_current_index(&self) -> i32 {
+        if self.showing_remote {
+            return -1;
+        }
+        self.state.current.map(|i| i as i32).unwrap_or(-1)
+    }
+
+    /// Which source the window shows (see the section comment).
+    fn choose_view(&mut self) {
+        let want = if !self.state.remote || self.rv.source.is_none() || self.engine.is_playing() {
+            false
+        } else if self.rv.playing || self.state.current.is_none() {
+            true
+        } else {
+            self.showing_remote
+        };
+        if want == self.showing_remote {
+            return;
+        }
+        if want {
+            self.showing_remote = true;
+            self.ui().set_remote(true);
+            self.render_remote();
+        } else {
+            self.leave_remote();
+        }
+    }
+
+    /// Back to Listen's own track.
+    fn leave_remote(&mut self) {
+        if !self.showing_remote {
+            return;
+        }
+        self.showing_remote = false;
+        let ui = self.ui();
+        ui.set_remote(false);
+        ui.set_can_prev(true);
+        ui.set_can_next(true);
+        ui.set_current_index(self.local_current_index());
+        if !self.local_dirty {
+            return;
+        }
+        self.show_track();
+        if let Some(path) = self.current_path().cloned() {
+            let d = self
+                .engine
+                .duration()
+                .or_else(|| self.durations.get(&path).copied().flatten());
+            ui.set_duration_secs(d.map(|d| d.as_secs_f32()).unwrap_or(0.0));
+            ui.set_can_seek(true);
+        }
+        self.clock_anchor.set(None);
+        if self.engine.is_loaded() {
+            self.tick_position();
+        } else {
+            ui.set_position_secs(0.0);
+            ui.set_progress(0.0);
+        }
+    }
+
+    fn render_remote(&mut self) {
+        self.local_dirty = true;
+        let ui = self.ui();
+        let source = self.rv.source.clone().unwrap_or_default();
+        ui.set_remote_source(source.as_str().into());
+        ui.set_current_index(-1);
+        ui.set_has_track(true);
+        self.render_remote_track();
+        let art = self.rv.art.clone();
+        self.apply_artwork(art.as_ref());
+        self.render_remote_timeline();
+    }
+
+    fn render_remote_track(&self) {
+        let ui = self.ui();
+        let rv = &self.rv;
+        // A session without metadata yet still says whose it is.
+        let title = if rv.title.is_empty() { rv.source.clone().unwrap_or_default() } else { rv.title.clone() };
+        ui.set_track_title(title.as_str().into());
+        ui.set_track_subtitle(rv.artist.as_str().into());
+    }
+
+    fn render_remote_timeline(&self) {
+        let ui = self.ui();
+        let d = self.rv.duration.map(|d| d.as_secs_f32()).unwrap_or(0.0);
+        ui.set_duration_secs(d);
+        ui.set_can_seek(self.rv.can_seek && d > 0.0);
+        ui.set_can_prev(self.rv.can_prev);
+        ui.set_can_next(self.rv.can_next);
+        self.tick_remote_position();
+    }
+
+    fn tick_remote_position(&self) {
+        let ui = self.ui();
+        let pos = self.rv.position_now().as_secs_f32();
+        if pos.floor() != ui.get_position_secs().floor() || !self.rv.playing {
+            ui.set_position_secs(pos);
+        }
+        let dur = ui.get_duration_secs();
+        ui.set_progress(if dur > 0.0 { (pos / dur).clamp(0.0, 1.0) } else { 0.0 });
+        if self.rv.playing && ui.get_queue_shown() {
+            ui.set_wave(self.wave_epoch.elapsed().as_secs_f32());
+        }
+    }
+
+    /// Artwork, its tints and the ambient wash (`None`: the placeholder and quiet duotone).
+    fn apply_artwork(&mut self, art: Option<&(slint::Image, [u8; 3], [[u8; 3]; 2])>) {
+        let ui = self.ui();
+        match art {
+            Some((image, tint, [ga, gb])) => {
+                ui.set_artwork(image.clone());
+                ui.set_tint(slint::Color::from_rgb_u8(tint[0], tint[1], tint[2]));
+                ui.set_tint_a(slint::Color::from_rgb_u8(ga[0], ga[1], ga[2]));
+                ui.set_tint_b(slint::Color::from_rgb_u8(gb[0], gb[1], gb[2]));
+                ui.set_has_artwork(true);
+                self.set_ambient(*ga, *gb);
+            }
+            None => {
+                ui.set_has_artwork(false);
+                self.set_default_ambient();
+            }
+        }
+    }
+
+    fn on_remote(&mut self, update: remote::Update) {
+        use remote::Update;
+        let shown = self.showing_remote;
+        match update {
+            Update::Session { session, source } => {
+                self.rv = RemoteView { session, source, ..RemoteView::default() };
+                if shown && self.rv.source.is_some() {
+                    self.render_remote();
+                }
+            }
+            Update::Track { session, title, artist, album } if session == self.rv.session => {
+                self.rv.title = title;
+                self.rv.artist = if artist.is_empty() { album } else { artist };
+                self.rv.track += 1;
+                if shown {
+                    self.render_remote_track();
+                }
+            }
+            Update::Art { session, art } if session == self.rv.session => {
+                self.rv.art = art.map(|a| {
+                    let buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(&a.rgba, a.size, a.size);
+                    (slint::Image::from_rgba8(buf), a.tint, a.glow)
+                });
+                if shown {
+                    if self.rv.art.is_some() {
+                        let art = self.rv.art.clone();
+                        self.apply_artwork(art.as_ref());
+                    } else {
+                        // Apps often send the title first and the artwork a moment later: keep
+                        // the previous cover briefly rather than flash the placeholder.
+                        let track = self.rv.track;
+                        slint::Timer::single_shot(Duration::from_millis(700), move || {
+                            with_app(|a| {
+                                if a.showing_remote && a.rv.track == track && a.rv.art.is_none() {
+                                    a.apply_artwork(None);
+                                }
+                            })
+                        });
+                    }
+                }
+            }
+            Update::Playback { session, playing, can_prev, can_next, can_seek } if session == self.rv.session => {
+                // Re-anchor the clock where it stands: a resumed session may not report a new
+                // position, and the old one would jump ahead by the time spent paused.
+                self.rv.position = self.rv.position_now();
+                self.rv.at = Instant::now();
+                self.rv.playing = playing;
+                self.rv.can_prev = can_prev;
+                self.rv.can_next = can_next;
+                self.rv.can_seek = can_seek;
+                if shown {
+                    self.render_remote_timeline();
+                }
+            }
+            Update::Timeline { session, position, duration, at } if session == self.rv.session => {
+                self.rv.position = position;
+                self.rv.duration = duration;
+                self.rv.at = at;
+                if shown {
+                    self.render_remote_timeline();
+                }
+            }
+            _ => return,
+        }
+        self.sync_playback();
+    }
+
+    /// Routes a transport command to the mirrored app; `false` when the local player has it.
+    fn remote_command(&mut self, cmd: remote::Cmd) -> bool {
+        if !self.showing_remote {
+            return false;
+        }
+        let Some(r) = &self.remote else { return false };
+        r.send(cmd);
+        match cmd {
+            remote::Cmd::Toggle => {
+                // Answer at once; the app's own report follows and confirms it.
+                self.rv.position = self.rv.position_now();
+                self.rv.at = Instant::now();
+                self.rv.playing = !self.rv.playing;
+                self.sync_playback();
+            }
+            remote::Cmd::SeekTo(d) => {
+                self.rv.position = d;
+                self.rv.at = Instant::now();
+                self.tick_remote_position();
+            }
+            _ => {}
+        }
+        true
+    }
+
+    fn remote_seek_fraction(&mut self, f: f32) -> bool {
+        if !self.showing_remote {
+            return false;
+        }
+        if let (true, Some(d)) = (self.rv.can_seek, self.rv.duration) {
+            self.remote_command(remote::Cmd::SeekTo(d.mul_f32(f.clamp(0.0, 1.0))));
+        }
+        true
+    }
+
+    fn remote_nudge(&mut self, secs: f64) -> bool {
+        if !self.showing_remote {
+            return false;
+        }
+        if let (true, Some(d)) = (self.rv.can_seek, self.rv.duration) {
+            let pos = (self.rv.position_now().as_secs_f64() + secs).clamp(0.0, d.as_secs_f64());
+            self.remote_command(remote::Cmd::SeekTo(Duration::from_secs_f64(pos)));
+        }
+        true
     }
 }

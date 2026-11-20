@@ -3,7 +3,7 @@
 // shrinks and fades, the centred title gives way to the title-bar title, then the mini player.
 
 import { T, M, L, Tip } from "theme.slint";
-import { Glyph, IconButton, GlyphButton, SkipButton, PlayButton, RepeatButton, DotsButton, PillButton, Slider } from "controls.slint";
+import { Glyph, IconButton, GlyphButton, SkipButton, PlayButton, RepeatButton, DotsButton, PillButton, Slider, TipSource } from "controls.slint";
 
 export { T, L }
 
@@ -348,6 +348,14 @@ export component AppWindow inherits Window {
     // Opacity of the window content during a mode change (the container morphs while empty).
     in property <float> content-fade: 1;
     in property <bool> can-seek;
+    // Remote mode: the window shows what another app plays (`remote-source`, e.g. "Spotify").
+    in property <bool> remote;
+    in property <string> remote-source;
+    in property <bool> remote-mode: true;
+    // No public API on macOS: the setting is not offered there.
+    in property <bool> remote-available: true;
+    in property <bool> can-prev: true;
+    in property <bool> can-next: true;
     in property <float> volume: 0.82;
     in property <int> repeat-mode;
     in property <bool> topmost;
@@ -408,6 +416,7 @@ export component AppWindow inherits Window {
     callback minimize();
     callback quit();
     callback add-files();
+    callback toggle-remote-mode();
     callback play-index(int);
     callback remove-index(int);
     callback clear-queue();
@@ -477,6 +486,13 @@ export component AppWindow inherits Window {
     property <string> s-show-queue: L.fr ? "Afficher la file d’attente" : "Show play queue";
     property <string> s-add-files: L.fr ? "Ajouter des fichiers…" : "Add audio files…";
     property <string> s-quit: L.fr ? "Quitter" : "Quit";
+    property <string> s-remote-mode: L.fr ? "Suivre les autres apps" : "Follow other apps";
+    property <string> s-remote-tip: L.fr ? "En lecture dans " + root.remote-source : "Playing in " + root.remote-source;
+    // "Artist · Spotify": where the source is not shown on its own.
+    property <string> with-source: root.shown-subtitle == "" ? root.remote-source : root.shown-subtitle + "  ·  " + root.remote-source;
+    // Listen's own controls that do not apply to another app fade out while mirroring.
+    property <float> own-controls: root.remote ? 0 : 1;
+    animate own-controls { duration: T.medium; easing: ease-out; }
     property <string> s-repeat: root.repeat-mode == 1 ? (L.fr ? "Répéter la file d’attente" : "Repeat play queue") : root.repeat-mode == 2 ? (L.fr ? "Répéter ce titre" : "Repeat this track") : (L.fr ? "Répétition désactivée" : "Repeat off");
 
 
@@ -626,6 +642,59 @@ export component AppWindow inherits Window {
                 image-rendering: pixelated;
                 opacity: root.hero-opacity;
             }
+            // Remote mode: whose playback the window shows, beside the wordmark.
+            source-pill := DragSurface {
+                property <float> shown: root.remote ? 1 : 0;
+                animate shown { duration: T.slow; easing: M.spring; }
+                x: 44px + root.wordmark-w + 11px;
+                y: (T.top-bar - self.height) / 2 + 1px;
+                height: 22px;
+                width: min(pill-row.preferred-width + 18px, window-buttons.x - self.x - 8px);
+                opacity: root.hero-opacity * self.shown;
+                visible: self.opacity > 0.01 && self.width > 44px;
+                start-drag => { root.start-drag(); }
+                Rectangle {
+                    border-radius: self.height / 2;
+                    background: T.glass-raised;
+                    border-width: 1px;
+                    border-color: T.hairline;
+                    clip: true;
+                    pill-row := HorizontalLayout {
+                        x: 8px;
+                        width: parent.width - 16px;
+                        spacing: 5px;
+                        alignment: start;
+                        Glyph {
+                            y: (parent.height - self.height) / 2;
+                            width: 13px;
+                            height: 10px;
+                            bx: 1;
+                            by: 3;
+                            bw: 18;
+                            bh: 14;
+                            thickness: 1.3px;
+                            color: T.secondary;
+                            commands: "M7,6.5 C5,8.5 5,11.5 7,13.5 M13,6.5 C15,8.5 15,11.5 13,13.5 M4.5,4 C1.2,7.3 1.2,12.7 4.5,16 M15.5,4 C18.8,7.3 18.8,12.7 15.5,16 M10,9.7 L10,10.3";
+                        }
+                        Text {
+                            text: root.remote-source;
+                            color: T.secondary;
+                            font-size: 11px;
+                            font-weight: 500;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+                TipSource {
+                    tip: root.s-remote-tip;
+                    hovered: source-pill.has-hover;
+                    pressed: source-pill.pressed;
+                    anchor-x: source-pill.absolute-position.x + source-pill.width / 2;
+                    anchor-top: source-pill.absolute-position.y;
+                    anchor-bottom: source-pill.absolute-position.y + source-pill.height;
+                }
+            }
             compact-title := VerticalLayout {
                 x: 14px;
                 y: 4px;
@@ -643,7 +712,7 @@ export component AppWindow inherits Window {
                     overflow: elide;
                 }
                 Text {
-                    text: root.has-track ? root.shown-subtitle : root.s-add-hint;
+                    text: root.has-track ? (root.remote ? root.with-source : root.shown-subtitle) : root.s-add-hint;
                     // No artist known: the title alone, centred in the bar.
                     height: self.text == "" ? 0px : self.preferred-height;
                     opacity: root.swap;
@@ -884,6 +953,9 @@ export component AppWindow inherits Window {
                 volume-button := GlyphButton {
                     x: 0;
                     size: 32px;
+                    // Listen's volume: no use on another app's sound.
+                    enabled: !root.remote;
+                    opacity: 0.3 + 0.7 * root.own-controls;
                     glyph: 18px;
                     tip: root.volume <= 0.001 ? (L.fr ? "Rétablir le son" : "Unmute") : (L.fr ? "Muet" : "Mute");
                     bx: 3.5;
@@ -902,6 +974,8 @@ export component AppWindow inherits Window {
                     width: 88px;
                     height: 24px;
                     visible: controls.show-volume-slider;
+                    enabled: !root.remote;
+                    opacity: 0.3 + 0.7 * root.own-controls;
                     wheel: true;
                     fill: #DADADA;
                     value: root.volume;
@@ -941,6 +1015,7 @@ export component AppWindow inherits Window {
                     x: controls.centre - 26px - 6px - self.width;
                     size: 42px;
                     tip: L.fr ? "Précédent" : "Previous";
+                    enabled: root.can-prev;
                     clicked => { root.previous(); }
                 }
                 PlayButton {
@@ -956,6 +1031,7 @@ export component AppWindow inherits Window {
                     size: 42px;
                     forward: true;
                     tip: L.fr ? "Suivant" : "Next";
+                    enabled: root.can-next;
                     clicked => { root.next(); }
                 }
                 RepeatButton {
@@ -963,6 +1039,9 @@ export component AppWindow inherits Window {
                     y: (parent.height - self.height) / 2;
                     size: 32px;
                     mode: root.repeat-mode;
+                    enabled: !root.remote;
+                    opacity: root.own-controls;
+                    visible: self.opacity > 0.01;
                     tip: root.s-repeat;
                     clicked => { root.cycle-repeat(); }
                 }
@@ -1184,7 +1263,7 @@ export component AppWindow inherits Window {
                 width: max(0px, mini-controls.x - self.x - 10px);
                 height: mini.row-h;
                 vertical-alignment: center;
-                text: root.has-track ? root.shown-title : "Listen";
+                text: !root.has-track ? "Listen" : root.remote ? root.shown-title + "  ·  " + root.remote-source : root.shown-title;
                 color: T.text;
                 font-size: 13px;
                 font-weight: 600;
@@ -1205,6 +1284,7 @@ export component AppWindow inherits Window {
                     size: 34px;
                     glyph: 17px;
                     tip: L.fr ? "Précédent" : "Previous";
+                    enabled: root.can-prev;
                     clicked => { root.previous(); }
                 }
                 PlayButton {
@@ -1221,6 +1301,7 @@ export component AppWindow inherits Window {
                     glyph: 17px;
                     forward: true;
                     tip: L.fr ? "Suivant" : "Next";
+                    enabled: root.can-next;
                     clicked => { root.next(); }
                 }
                 RepeatButton {
@@ -1228,6 +1309,9 @@ export component AppWindow inherits Window {
                     size: 24px;
                     small: true;
                     mode: root.repeat-mode;
+                    enabled: !root.remote;
+                    opacity: root.own-controls;
+                    visible: self.opacity > 0.01;
                     tip: root.s-repeat;
                     clicked => { root.cycle-repeat(); }
                 }
@@ -1307,7 +1391,7 @@ export component AppWindow inherits Window {
 
     // ================= More menu =================
     menu := PopupWindow {
-        property <int> rows: 5;
+        property <int> rows: root.remote-available ? 6 : 5;
         property <length> natural-row: 36px;
         property <length> seps: 2 * 11px;
         // Rows shrink to fit a short window.
@@ -1361,6 +1445,17 @@ export component AppWindow inherits Window {
                     bw: 10;
                     bh: 8;
                     activated => { root.toggle-queue(); }
+                }
+                if root.remote-available: MenuRow {
+                    height: menu.row-h;
+                    text: root.s-remote-mode;
+                    active: root.remote-mode;
+                    commands: "M7,6.5 C5,8.5 5,11.5 7,13.5 M13,6.5 C15,8.5 15,11.5 13,13.5 M4.5,4 C1.2,7.3 1.2,12.7 4.5,16 M15.5,4 C18.8,7.3 18.8,12.7 15.5,16 M10,9.7 L10,10.3";
+                    bx: 1;
+                    by: 3;
+                    bw: 18;
+                    bh: 14;
+                    activated => { root.toggle-remote-mode(); }
                 }
                 Rectangle {
                     height: 11px;
