@@ -8,9 +8,11 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Shell;
 using System.Windows.Threading;
@@ -30,6 +32,8 @@ namespace ListenApp
         private readonly MediaPlayer _player;
         private readonly DispatcherTimer _timer;
         private readonly TaskbarThumbnailButtons _taskbarButtons;
+        private readonly WindowMorph _morph;
+        private MediaSession _media;
         private readonly bool _isFrench;
 
         private Grid _fullRoot;
@@ -63,6 +67,14 @@ namespace ListenApp
         private MinimalSlider _miniSeek;
         private MinimalSlider _volume;
         private Border _queuePanel;
+        private Grid _miniContent;
+        private Grid _miniProgressRow;
+        private Grid _seekRow;
+        private Grid _controlsRow;
+        private FrameworkElement _logo;
+        private FrameworkElement _appName;
+        private StackPanel _compactTitle;
+        private StackPanel _miniControls;
         private ListBox _queueList;
         private ScrollViewer _queueScrollViewer;
         private MinimalScrollBar _queueScrollBar;
@@ -76,6 +88,19 @@ namespace ListenApp
         private double _normalWidth = UiTokens.Layout.WindowWidth;
         private double _normalHeight = UiTokens.Layout.WindowHeight;
         private double _heightBeforeQueueOpen = double.NaN;
+        private double _miniMinWidth = double.NaN;
+        private double _compactHeight = double.NaN;
+        private double _heroMinHeight = double.NaN;
+        private bool _userResizing;
+        private int _miniResizeEdge;
+        private Point _miniResizeOrigin;
+        private Rect _miniResizeStart;
+        private Size _sizeMoveStart;
+        // Mode the UI shows or is morphing toward (the persisted flag may say mini before the UI does).
+        private bool _miniApplied;
+        // Last placement, so the inverse resize returns exactly to where the window came from.
+        private Rect _placedFrom = Rect.Empty;
+        private Rect _placedTo = Rect.Empty;
         private bool _closing;
         private double _volumeBeforeMute = 0.82;
         private readonly Dictionary<string, string> _durationCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -89,7 +114,8 @@ namespace ListenApp
             Width = UiTokens.Layout.WindowWidth;
             Height = UiTokens.Layout.WindowHeight;
             MinWidth = UiTokens.Layout.WindowMinWidth;
-            MinHeight = UiTokens.Layout.WindowMinHeight;
+            // Low enough for an edge drag to reach the compact and mini layouts (see SnapSizingRect).
+            MinHeight = UiTokens.Layout.MiniWindowHeight;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             WindowStyle = WindowStyle.None;
             ResizeMode = ResizeMode.CanResize;
@@ -120,6 +146,7 @@ namespace ListenApp
             _timer.Interval = TimeSpan.FromMilliseconds(250);
             _timer.Tick += OnTimerTick;
 
+            _morph = new WindowMorph(this, Bg);
             BuildUi();
             Content = BuildRoot();
 
@@ -133,8 +160,12 @@ namespace ListenApp
             Loaded += OnLoaded;
             Closing += OnClosing;
             PreviewKeyDown += OnPreviewKeyDown;
+            SizeChanged += delegate { ApplyResponsiveLayout(ActualWidth, ActualHeight, _userResizing || _miniResizeEdge != 0); };
             PreviewMouseDown += OnPreviewMouseDownCloseMenu;
             PreviewMouseLeftButtonDown += OnFullSurfaceDrag;
+            PreviewMouseMove += OnWindowPreviewMouseMove;
+            PreviewMouseLeftButtonUp += OnWindowPreviewMouseUp;
+            LostMouseCapture += OnWindowLostMouseCapture;
             Deactivated += delegate { if (_menuPopup != null) _menuPopup.IsOpen = false; };
             DragOver += OnDragOver;
             DragLeave += OnRootDragLeave;
@@ -152,9 +183,9 @@ namespace ListenApp
             }
 
             Topmost = _state.AlwaysOnTop;
-            SetQueueVisible(_state.QueueVisible);
+            SetQueueVisible(_state.QueueVisible, false);
             if (_state.MiniMode)
-                Dispatcher.BeginInvoke(new Action(delegate { SetMiniMode(true); }), DispatcherPriority.Loaded);
+                Dispatcher.BeginInvoke(new Action(delegate { SetMiniMode(true, false); }), DispatcherPriority.Loaded);
         }
 
         private UIElement BuildRoot()
@@ -176,7 +207,7 @@ namespace ListenApp
         private void BuildFullUi()
         {
             _fullRoot = new Grid();
-            _fullRoot.RowDefinitions.Add(new RowDefinition { Height = new GridLength(42) });
+            _fullRoot.RowDefinitions.Add(new RowDefinition { Height = new GridLength(UiTokens.Layout.TopBarHeight) });
             _fullRoot.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             _fullRoot.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             _fullRoot.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -205,6 +236,7 @@ namespace ListenApp
             logo.Child = note;
             Grid.SetColumn(logo, 0);
             top.Children.Add(logo);
+            _logo = logo;
 
             TextBlock appName = new TextBlock();
             appName.Text = "Listen";
@@ -214,6 +246,27 @@ namespace ListenApp
             appName.Margin = new Thickness(9, 0, 0, 0);
             Grid.SetColumn(appName, 1);
             top.Children.Add(appName);
+            _appName = appName;
+
+            // Compact layout: the track takes the place of the app name, the artwork goes away.
+            _compactTitle = new StackPanel();
+            _compactTitle.VerticalAlignment = VerticalAlignment.Center;
+            _compactTitle.Margin = new Thickness(4, 0, 10, 0);
+            _compactTitle.Visibility = Visibility.Collapsed;
+            TextBlock compactTitleText = new TextBlock();
+            compactTitleText.Foreground = Text;
+            compactTitleText.FontSize = 14;
+            compactTitleText.FontFamily = new FontFamily("Segoe UI Variable Text");
+            compactTitleText.FontWeight = FontWeights.SemiBold;
+            compactTitleText.TextTrimming = TextTrimming.CharacterEllipsis;
+            _compactTitle.Children.Add(compactTitleText);
+            TextBlock compactSubtitleText = new TextBlock();
+            compactSubtitleText.Foreground = Muted;
+            compactSubtitleText.FontSize = 11;
+            compactSubtitleText.TextTrimming = TextTrimming.CharacterEllipsis;
+            _compactTitle.Children.Add(compactSubtitleText);
+            Grid.SetColumnSpan(_compactTitle, 2);
+            top.Children.Add(_compactTitle);
 
             StackPanel windowButtons = new StackPanel();
             windowButtons.Orientation = Orientation.Horizontal;
@@ -348,6 +401,7 @@ namespace ListenApp
 
             Grid.SetRow(seekRow, 2);
             _fullRoot.Children.Add(seekRow);
+            _seekRow = seekRow;
 
             Grid controls = new Grid();
             controls.Margin = new Thickness(
@@ -437,6 +491,9 @@ namespace ListenApp
 
             Grid.SetRow(controls, 3);
             _fullRoot.Children.Add(controls);
+            _controlsRow = controls;
+            compactTitleText.SetBinding(TextBlock.TextProperty, new Binding("Text") { Source = _titleText });
+            compactSubtitleText.SetBinding(TextBlock.TextProperty, new Binding("Text") { Source = _subtitleText });
 
             _queuePanel = BuildQueuePanel();
             Grid.SetRow(_queuePanel, 4);
@@ -457,7 +514,8 @@ namespace ListenApp
             shell.CornerRadius = new CornerRadius(12);
 
             Grid content = new Grid();
-            content.Margin = new Thickness(12, 5, 8, 5);
+            _miniContent = content;
+            content.Margin = new Thickness(UiTokens.Layout.MiniLeftInset, 5, 8, 5);
             content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -476,6 +534,7 @@ namespace ListenApp
             content.Children.Add(_miniTitleText);
 
             StackPanel miniControls = new StackPanel();
+            _miniControls = miniControls;
             miniControls.Orientation = Orientation.Horizontal;
             miniControls.VerticalAlignment = VerticalAlignment.Center;
             miniControls.Margin = new Thickness(0);
@@ -510,6 +569,7 @@ namespace ListenApp
             content.Children.Add(miniControls);
 
             Grid progressRow = new Grid();
+            _miniProgressRow = progressRow;
             progressRow.Margin = new Thickness(0, 0, 1, 0);
             progressRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(39) });
             progressRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -546,7 +606,7 @@ namespace ListenApp
             panel.BorderBrush = UiBorderBrush;
             panel.BorderThickness = new Thickness(0, 1, 0, 0);
             panel.Padding = new Thickness(18, 10, 18, 12);
-            panel.Height = 190;
+            panel.Height = UiTokens.Layout.QueuePanelHeight;
 
             Grid grid = new Grid();
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -993,8 +1053,9 @@ namespace ListenApp
             }
             catch { }
 
+            // Before the first track, wrap to the last one (a single track simply restarts).
             int target = _currentIndex - 1;
-            if (target < 0) target = 0;
+            if (target < 0) target = _state.Queue.Count - 1;
             PlayIndex(target);
         }
 
@@ -1003,22 +1064,29 @@ namespace ListenApp
             if (_state.Queue.Count == 0)
                 return;
             int target = _currentIndex + 1;
-            if (target >= _state.Queue.Count)
+            if (target < _state.Queue.Count)
             {
-                if (fromEnded && _state.LoopMode == 1)
-                {
-                    PlayIndex(0);
-                    return;
-                }
-                if (fromEnded)
-                {
-                    StopPlayback();
-                    _seek.Value = 1;
-                    _miniSeek.Value = 1;
-                }
+                PlayIndex(target);
                 return;
             }
-            PlayIndex(target);
+
+            if (!fromEnded)
+            {
+                // A deliberate skip past the last track wraps to the first, mirroring Previous.
+                if (_state.Queue.Count > 1)
+                    PlayIndex(0);
+                return;
+            }
+
+            // Natural end of the queue: continue only when repeating the queue.
+            if (_state.LoopMode == 1)
+            {
+                PlayIndex(0);
+                return;
+            }
+            StopPlayback();
+            _seek.Value = 1;
+            _miniSeek.Value = 1;
         }
 
         private void CycleLoopMode()
@@ -1161,6 +1229,8 @@ namespace ListenApp
             if (_miniPlayButton != null)
                 _miniPlayButton.Content = UiPrimitives.TransportGlyph(_isPlaying, 20);
             _taskbarButtons.SetPlaying(_isPlaying);
+            if (_media != null)
+                _media.SetPlayback(_isPlaying, _currentIndex >= 0 && _currentIndex < _state.Queue.Count, _state.Queue.Count);
         }
 
         private void UpdateArtwork(string path)
@@ -1247,6 +1317,8 @@ namespace ListenApp
                 UpdateArtwork(null);
                 _miniTitleText.Text = "Listen";
                 Title = "Listen";
+                if (_media != null)
+                    _media.SetTrack(null, null);
                 return;
             }
 
@@ -1271,6 +1343,8 @@ namespace ListenApp
             UpdateArtwork(path);
             _miniTitleText.Text = title;
             Title = "Listen — " + title;
+            if (_media != null)
+                _media.SetTrack(path, title);
         }
 
         private string GetCachedDurationText(string path)
@@ -1468,51 +1542,153 @@ namespace ListenApp
 
         private void SetMiniMode(bool mini)
         {
-            if (_state.MiniMode == mini && ((_miniRoot.Visibility == Visibility.Visible) == mini))
+            SetMiniMode(mini, true);
+        }
+
+        private void SetMiniMode(bool mini, bool animate)
+        {
+            if (_miniApplied == mini)
                 return;
 
             if (_menuPopup != null)
                 _menuPopup.IsOpen = false;
+            _morph.Complete();
 
+            IntPtr hwnd = new WindowInteropHelper(this).Handle;
+            Rect current;
+            if (hwnd == IntPtr.Zero || !NativeWindowGeometry.TryGetBounds(hwnd, out current))
+            {
+                ApplyModeWithoutWindow(mini);
+                return;
+            }
+
+            double scale = NativeWindowGeometry.DeviceScale(this);
+            if (mini)
+            {
+                _normalWidth = current.Width / scale;
+                _normalHeight = current.Height / scale;
+            }
+            else
+            {
+                _state.MiniWidth = current.Width / scale;
+            }
+            _miniApplied = mini;
+            _state.MiniMode = mini;
+
+            Size size = mini
+                ? new Size(ClampMiniWidth(_state.MiniWidth), UiTokens.Layout.MiniWindowHeight)
+                : new Size(Math.Max(UiTokens.Layout.WindowMinWidth, _normalWidth), Math.Max(CompactHeight(), _normalHeight));
+            Rect target = PlanBounds(hwnd, current, new Size(size.Width * scale, size.Height * scale), scale);
+
+            _morph.Run(target, animate ? UiTokens.Motion.ModeMorphMs : 0, MorphStyle.Fade,
+                delegate
+                {
+                    ApplyResponsiveLayout(target.Width / scale, target.Height / scale);
+                    // Constraints of the mode being left would block the single resize.
+                    MinWidth = 0;
+                    MinHeight = 0;
+                    MaxWidth = double.PositiveInfinity;
+                    MaxHeight = double.PositiveInfinity;
+                    Topmost = mini || _state.AlwaysOnTop;
+                },
+                delegate { ApplyModeConstraints(mini); });
+            _state.Save();
+        }
+
+        // Only reachable before the native window exists; there is nothing to animate yet.
+        private void ApplyModeWithoutWindow(bool mini)
+        {
             if (mini)
             {
                 _normalWidth = ActualWidth > 200 ? ActualWidth : Width;
                 _normalHeight = ActualHeight > 200 ? ActualHeight : Height;
-                _state.MiniMode = true;
-                _fullRoot.Visibility = Visibility.Collapsed;
-                _miniRoot.Visibility = Visibility.Visible;
-                MinWidth = UiTokens.Layout.MiniWindowMinWidth;
-                MinHeight = UiTokens.Layout.MiniWindowHeight;
-                Width = UiTokens.Layout.MiniWindowWidth;
-                Height = UiTokens.Layout.MiniWindowHeight;
+            }
+            _miniApplied = mini;
+            _state.MiniMode = mini;
+            ApplyModeConstraints(mini);
+            Width = mini ? ClampMiniWidth(_state.MiniWidth) : Math.Max(UiTokens.Layout.WindowMinWidth, _normalWidth);
+            Height = mini ? UiTokens.Layout.MiniWindowHeight : Math.Max(CompactHeight(), _normalHeight);
+            ApplyResponsiveLayout(Width, Height);
+            Topmost = mini || _state.AlwaysOnTop;
+            _state.Save();
+        }
+
+        private void ApplyModeConstraints(bool mini)
+        {
+            if (mini)
+            {
+                // NoResize keeps Windows from snapping or maximizing the mini player while it is
+                // dragged around; it resizes itself (TryBeginMiniResize).
                 ResizeMode = ResizeMode.NoResize;
-                Topmost = true;
+                MinWidth = MiniMinWidth();
             }
             else
             {
-                _state.MiniMode = false;
-                _miniRoot.Visibility = Visibility.Collapsed;
-                _fullRoot.Visibility = Visibility.Visible;
                 ResizeMode = ResizeMode.CanResize;
                 MinWidth = UiTokens.Layout.WindowMinWidth;
-                MinHeight = UiTokens.Layout.WindowMinHeight;
-                Width = Math.Max(UiTokens.Layout.WindowMinWidth, _normalWidth);
-                Height = Math.Max(UiTokens.Layout.WindowMinHeight, _normalHeight);
-                Topmost = _state.AlwaysOnTop;
             }
-            _state.Save();
+            // Heights are governed by the resting layouts (SnapSizingRect), not by constraints.
+            MaxWidth = double.PositiveInfinity;
+            MaxHeight = double.PositiveInfinity;
+            MinHeight = UiTokens.Layout.MiniWindowHeight;
+        }
+
+        /// <summary>Narrowest mini player: the five transport buttons and nothing else.</summary>
+        private double MiniMinWidth()
+        {
+            if (double.IsNaN(_miniMinWidth))
+            {
+                _miniControls.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+                double controls = _miniControls.DesiredSize.Width;
+                if (controls <= 0)
+                    return UiTokens.Layout.MiniWindowWidth;
+                _miniMinWidth = Math.Ceiling(controls + UiTokens.Layout.MiniTightLeftInset + _miniContent.Margin.Right);
+            }
+            return _miniMinWidth;
+        }
+
+        private double ClampMiniWidth(double width)
+        {
+            return Math.Max(MiniMinWidth(), width);
+        }
+
+        /// <summary>
+        /// Target bounds (device pixels) for resizing the window to <paramref name="size"/>.
+        /// Undoing the previous resize returns exactly to where it started; otherwise the
+        /// window is placed to stay fully on screen (see NativeWindowGeometry.Place).
+        /// </summary>
+        private Rect PlanBounds(IntPtr hwnd, Rect current, Size size, double scale)
+        {
+            Rect target;
+            if (!_placedTo.IsEmpty && RoughlyEqual(current, _placedTo) &&
+                Math.Abs(_placedFrom.Width - size.Width) <= 2 && Math.Abs(_placedFrom.Height - size.Height) <= 2)
+            {
+                target = _placedFrom;
+            }
+            else
+            {
+                target = NativeWindowGeometry.Place(current, size, NativeWindowGeometry.GetWorkArea(hwnd),
+                    UiTokens.Layout.ScreenEdgeDockTolerance * scale);
+            }
+            _placedFrom = current;
+            _placedTo = target;
+            return target;
+        }
+
+        private static bool RoughlyEqual(Rect a, Rect b)
+        {
+            return Math.Abs(a.Left - b.Left) <= 2 && Math.Abs(a.Top - b.Top) <= 2 &&
+                   Math.Abs(a.Right - b.Right) <= 2 && Math.Abs(a.Bottom - b.Bottom) <= 2;
         }
 
         private void SetQueueVisible(bool visible)
         {
-            if (visible && double.IsNaN(_heightBeforeQueueOpen) && !_state.MiniMode)
-            {
-                double currentHeight = ActualHeight > 0 ? ActualHeight : Height;
-                _heightBeforeQueueOpen = Math.Max(UiTokens.Layout.WindowMinHeight, currentHeight);
-            }
+            SetQueueVisible(visible, true);
+        }
 
+        private void SetQueueVisible(bool visible, bool animate)
+        {
             _state.QueueVisible = visible;
-            _queuePanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
             if (_queueButton != null)
             {
                 Brush queueBrush = visible ? Accent : Text;
@@ -1520,21 +1696,58 @@ namespace ListenApp
                 UiPrimitives.SetPathButtonBrush(_queueButton, queueBrush);
             }
 
-            if (visible && !_state.MiniMode && Height < UiTokens.Layout.QueueExpandedMinWindowHeight)
+            IntPtr hwnd = new WindowInteropHelper(this).Handle;
+            Rect current = Rect.Empty;
+            bool hasWindow = hwnd != IntPtr.Zero && NativeWindowGeometry.TryGetBounds(hwnd, out current);
+            if (!hasWindow || _miniApplied)
             {
-                Height = UiTokens.Layout.QueueExpandedMinWindowHeight;
-            }
-            else if (!visible && !double.IsNaN(_heightBeforeQueueOpen))
-            {
-                double restoreHeight = Math.Max(UiTokens.Layout.WindowMinHeight, _heightBeforeQueueOpen);
-                if (_state.MiniMode)
-                    _normalHeight = restoreHeight;
+                // The full player is not on screen: update its layout and remembered height only.
+                _queuePanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+                if (!hasWindow)
+                    Height = QueueWindowHeight(visible, Height);
                 else
-                    Height = restoreHeight;
-                _heightBeforeQueueOpen = double.NaN;
+                    _normalHeight = QueueWindowHeight(visible, _normalHeight);
+                _state.Save();
+                return;
             }
 
+            _morph.Complete();
+            NativeWindowGeometry.TryGetBounds(hwnd, out current);
+            double scale = NativeWindowGeometry.DeviceScale(this);
+            double height = QueueWindowHeight(visible, current.Height / scale) * scale;
+            Rect target = Math.Abs(height - current.Height) < 1
+                ? current
+                : PlanBounds(hwnd, current, new Size(current.Width, height), scale);
+
+            // When the window changes by exactly the panel, the player above it is untouched and
+            // the queue opens like a drawer. If the screen forced a different size, fade instead.
+            double change = Math.Abs(target.Height - current.Height);
+            bool drawer = Math.Abs(change - UiTokens.Layout.QueuePanelHeight * scale) <= 1.5 &&
+                          Math.Abs(target.Width - current.Width) < 1;
+            _morph.Run(target, animate ? UiTokens.Motion.QueueRevealMs : 0, drawer ? MorphStyle.Slide : MorphStyle.Fade,
+                delegate { ApplyResponsiveLayout(target.Width / scale, target.Height / scale); },
+                null);
             _state.Save();
+        }
+
+        /// <summary>
+        /// Window height (DIPs) for the queue state. The queue adds its own height below the
+        /// player instead of squeezing it, and closing restores the height from before.
+        /// </summary>
+        private double QueueWindowHeight(bool visible, double height)
+        {
+            if (visible)
+            {
+                if (!double.IsNaN(_heightBeforeQueueOpen))
+                    return height;
+                _heightBeforeQueueOpen = height;
+                return _heightBeforeQueueOpen + UiTokens.Layout.QueuePanelHeight;
+            }
+            if (double.IsNaN(_heightBeforeQueueOpen))
+                return height;
+            double restore = _heightBeforeQueueOpen;
+            _heightBeforeQueueOpen = double.NaN;
+            return restore;
         }
 
         private void OnLoaded(object sender, RoutedEventArgs e)
@@ -1553,6 +1766,9 @@ namespace ListenApp
             _closing = true;
             try
             {
+                _morph.Complete();
+                if (_miniApplied && ActualWidth > 0)
+                    _state.MiniWidth = ActualWidth;
                 _state.Volume = _player.Volume;
                 _state.Save();
                 _timer.Stop();
@@ -1796,6 +2012,11 @@ namespace ListenApp
         {
             if (e.ChangedButton != MouseButton.Left)
                 return;
+            if (e.ClickCount == 1 && TryBeginMiniResize(e))
+            {
+                e.Handled = true;
+                return;
+            }
             DependencyObject original = e.OriginalSource as DependencyObject;
             if (FindParent<Button>(original) != null || FindParent<MinimalSlider>(original) != null)
                 return;
@@ -1844,7 +2065,353 @@ namespace ListenApp
         {
             IntPtr hwnd = new WindowInteropHelper(this).Handle;
             TryApplyDwm(hwnd);
+            // Registered after WindowChrome's own hook, so it is consulted first.
+            HwndSource source = HwndSource.FromHwnd(hwnd);
+            if (source != null)
+                source.AddHook(WindowMessageHook);
+
+            // Keyboard media keys, headset buttons and the volume flyout's media panel.
+            _media = MediaSession.TryCreate(hwnd, Dispatcher);
+            if (_media != null)
+            {
+                _media.PlayPressed += delegate { if (!_isPlaying) TogglePlayPause(); };
+                _media.PausePressed += delegate { if (_isPlaying) TogglePlayPause(); };
+                _media.NextPressed += delegate { Next(false); };
+                _media.PreviousPressed += delegate { Previous(); };
+                _media.StopPressed += delegate { if (_isPlaying) TogglePlayPause(); };
+                if (_currentIndex >= 0 && _currentIndex < _state.Queue.Count)
+                    _media.SetTrack(_state.Queue[_currentIndex], Path.GetFileNameWithoutExtension(_state.Queue[_currentIndex]));
+                UpdatePlaybackVisuals();
+            }
         }
+
+        private IntPtr WindowMessageHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            const int WmNcHitTest = 0x0084;
+            const int WmEnterSizeMove = 0x0231;
+            const int WmExitSizeMove = 0x0232;
+            const int HtClient = 1;
+            switch (msg)
+            {
+                case WmNcHitTest:
+                    // The mini player resizes itself (BeginMiniResize); keep WindowChrome's
+                    // native edges out of its way.
+                    if (_miniApplied)
+                    {
+                        handled = true;
+                        return new IntPtr(HtClient);
+                    }
+                    break;
+                case WmEnterSizeMove:
+                    _sizeMoveStart = new Size(ActualWidth, ActualHeight);
+                    _userResizing = true;
+                    break;
+                case WmExitSizeMove:
+                    _userResizing = false;
+                    SyncModeWithSize();
+                    break;
+            }
+            return IntPtr.Zero;
+        }
+
+        // ----- Mini player resizing -------------------------------------------------------
+        // The mini player keeps ResizeMode.NoResize so Windows never snaps or maximizes it, and
+        // Windows will not run its sizing loop for such a window. It therefore resizes itself:
+        // every edge and corner, with the height free so it can be pulled open into the
+        // compact or normal layout.
+
+        private const int EdgeLeft = 1, EdgeRight = 2, EdgeTop = 4, EdgeBottom = 8;
+
+        private int MiniEdgeAt(Point point)
+        {
+            double grip = UiTokens.Layout.MiniResizeBorder;
+            int edge = 0;
+            if (point.X < grip) edge |= EdgeLeft;
+            else if (point.X >= ActualWidth - grip) edge |= EdgeRight;
+            if (point.Y < grip) edge |= EdgeTop;
+            else if (point.Y >= ActualHeight - grip) edge |= EdgeBottom;
+            return edge;
+        }
+
+        private static Cursor CursorForEdge(int edge)
+        {
+            switch (edge)
+            {
+                case EdgeLeft:
+                case EdgeRight:
+                    return Cursors.SizeWE;
+                case EdgeTop:
+                case EdgeBottom:
+                    return Cursors.SizeNS;
+                case EdgeLeft | EdgeTop:
+                case EdgeRight | EdgeBottom:
+                    return Cursors.SizeNWSE;
+                case EdgeRight | EdgeTop:
+                case EdgeLeft | EdgeBottom:
+                    return Cursors.SizeNESW;
+                default:
+                    return null;
+            }
+        }
+
+        private bool TryBeginMiniResize(MouseButtonEventArgs e)
+        {
+            if (!_miniApplied || _morph.IsRunning)
+                return false;
+            int edge = MiniEdgeAt(e.GetPosition(this));
+            NativePoint cursor;
+            Rect bounds;
+            IntPtr hwnd = new WindowInteropHelper(this).Handle;
+            if (edge == 0 || hwnd == IntPtr.Zero || !GetCursorPos(out cursor) || !NativeWindowGeometry.TryGetBounds(hwnd, out bounds))
+                return false;
+            _miniResizeEdge = edge;
+            _miniResizeOrigin = new Point(cursor.X, cursor.Y);
+            _miniResizeStart = bounds;
+            _sizeMoveStart = new Size(ActualWidth, ActualHeight);
+            CaptureMouse();
+            return true;
+        }
+
+        private void OnWindowPreviewMouseMove(object sender, MouseEventArgs e)
+        {
+            if (_miniResizeEdge != 0)
+            {
+                ResizeMiniToCursor();
+                e.Handled = true;
+                return;
+            }
+            Cursor cursor = _miniApplied && !_morph.IsRunning ? CursorForEdge(MiniEdgeAt(e.GetPosition(this))) : null;
+            if (Cursor != cursor)
+                Cursor = cursor;
+        }
+
+        private void ResizeMiniToCursor()
+        {
+            NativePoint cursor;
+            IntPtr hwnd = new WindowInteropHelper(this).Handle;
+            if (hwnd == IntPtr.Zero || !GetCursorPos(out cursor))
+                return;
+            double scale = NativeWindowGeometry.DeviceScale(this);
+            double dx = cursor.X - _miniResizeOrigin.X;
+            double dy = cursor.Y - _miniResizeOrigin.Y;
+            double left = _miniResizeStart.Left, top = _miniResizeStart.Top;
+            double right = _miniResizeStart.Right, bottom = _miniResizeStart.Bottom;
+            if ((_miniResizeEdge & EdgeLeft) != 0) left += dx;
+            if ((_miniResizeEdge & EdgeRight) != 0) right += dx;
+            if ((_miniResizeEdge & EdgeTop) != 0) top += dy;
+            if ((_miniResizeEdge & EdgeBottom) != 0) bottom += dy;
+
+            double minHeight = Math.Ceiling(UiTokens.Layout.MiniWindowHeight * scale);
+            if (bottom - top < minHeight)
+            {
+                if ((_miniResizeEdge & EdgeTop) != 0) top = bottom - minHeight;
+                else bottom = top + minHeight;
+            }
+            // Pulled open past the mini layout, the window needs the full layout's width.
+            double minWidth = Math.Ceiling((IsMiniHeight((bottom - top) / scale) ? MiniMinWidth() : UiTokens.Layout.WindowMinWidth) * scale);
+            if (right - left < minWidth)
+            {
+                if ((_miniResizeEdge & EdgeLeft) != 0) left = right - minWidth;
+                else right = left + minWidth;
+            }
+            NativeWindowGeometry.SetBounds(hwnd, new Rect(left, top, right - left, bottom - top));
+        }
+
+        private void OnWindowPreviewMouseUp(object sender, MouseButtonEventArgs e)
+        {
+            if (_miniResizeEdge == 0)
+                return;
+            ReleaseMouseCapture();
+            e.Handled = true;
+        }
+
+        private void OnWindowLostMouseCapture(object sender, MouseEventArgs e)
+        {
+            if (_miniResizeEdge == 0)
+                return;
+            _miniResizeEdge = 0;
+            SyncModeWithSize();
+        }
+
+        /// <summary>
+        /// After a resize, the window's mode follows the layout it was left in: shrunk into the
+        /// mini layout it becomes the mini player (and Expand returns to the size from before);
+        /// pulled open from the mini player it becomes the full player again.
+        /// </summary>
+        private void SyncModeWithSize()
+        {
+            bool mini = IsMiniHeight(ActualHeight);
+            if (mini == _miniApplied)
+                return;
+            _miniApplied = mini;
+            _state.MiniMode = mini;
+            if (mini)
+            {
+                _normalWidth = _sizeMoveStart.Width;
+                _normalHeight = _sizeMoveStart.Height;
+            }
+            else
+            {
+                _state.MiniWidth = _sizeMoveStart.Width;
+                Cursor = null;
+            }
+            _placedTo = Rect.Empty;
+            ApplyModeConstraints(mini);
+            Topmost = mini || _state.AlwaysOnTop;
+            _state.Save();
+        }
+
+        // ----- Responsive layout ----------------------------------------------------------
+        // The height is free; the layout adapts as it shrinks: the artwork scales down and then
+        // goes, the title recentres, then moves into the title bar (compact), and below the
+        // compact layout's own height the window shows the mini layout.
+
+        /// <summary>Natural height of the compact layout: title bar, progress and transport.</summary>
+        private double CompactHeight()
+        {
+            if (double.IsNaN(_compactHeight))
+            {
+                Size unbounded = new Size(double.PositiveInfinity, double.PositiveInfinity);
+                _seekRow.Measure(unbounded);
+                _controlsRow.Measure(unbounded);
+                double rows = _seekRow.DesiredSize.Height + _controlsRow.DesiredSize.Height;
+                if (rows <= 0)
+                    return UiTokens.Layout.TopBarHeight + 110;
+                _compactHeight = Math.Ceiling(UiTokens.Layout.TopBarHeight + rows);
+            }
+            return _compactHeight;
+        }
+
+        /// <summary>Smallest content height that still shows the title and subtitle centred.</summary>
+        private double HeroMinHeight()
+        {
+            if (double.IsNaN(_heroMinHeight))
+            {
+                Size unbounded = new Size(double.PositiveInfinity, double.PositiveInfinity);
+                _titleText.Measure(unbounded);
+                _heroDropHint.Measure(unbounded);
+                double rows = _titleText.DesiredSize.Height + _heroDropHint.DesiredSize.Height;
+                if (rows <= 0)
+                    return CompactHeight() + 90;
+                Thickness margin = _heroArea.Margin;
+                _heroMinHeight = Math.Ceiling(CompactHeight() + rows + margin.Top + margin.Bottom);
+            }
+            return _heroMinHeight;
+        }
+
+        private bool QueueFits(double height)
+        {
+            return _state.QueueVisible && height - UiTokens.Layout.QueuePanelHeight >= CompactHeight();
+        }
+
+        private bool IsMiniHeight(double height)
+        {
+            double content = QueueFits(height) ? height - UiTokens.Layout.QueuePanelHeight : height;
+            return content < CompactHeight();
+        }
+
+        private void ApplyResponsiveLayout(double width, double height)
+        {
+            ApplyResponsiveLayout(width, height, false);
+        }
+
+        /// <summary>
+        /// Lays the window out for its size. Every change is a function of the height, so a
+        /// resize drag plays it forwards and backwards: the artwork shrinks to nothing and fades,
+        /// the centred title fades out and only then does the title-bar title fade in (never two
+        /// titles at once), and the transport never moves. Only the switch to or from the mini
+        /// layout is a swap; while the user resizes it fades the incoming layout in.
+        /// </summary>
+        private void ApplyResponsiveLayout(double width, double height, bool userResizing)
+        {
+            if (_fullRoot == null || _miniRoot == null || width <= 0 || height <= 0)
+                return;
+            bool queue = QueueFits(height);
+            double content = queue ? height - UiTokens.Layout.QueuePanelHeight : height;
+            bool mini = content < CompactHeight();
+            double heroMin = HeroMinHeight();
+            // 0 at the hero's minimum height, 1 a fade band above it.
+            double toHero = Clamp01((content - heroMin) / UiTokens.Layout.LayoutFadeBand);
+            double heroOpacity = Clamp01(toHero * 2 - 1);
+            double compactOpacity = content < heroMin ? 1 : Clamp01(1 - toHero * 2);
+            double artworkOpacity = Clamp01((content - heroMin - UiTokens.Layout.ArtworkFadeStart) / UiTokens.Layout.LayoutFadeBand);
+
+            bool wasMini = _miniRoot.Visibility == Visibility.Visible;
+            SetVisible(_miniRoot, mini);
+            SetVisible(_fullRoot, !mini);
+            if (mini != wasMini)
+                RevealLayout(mini ? (UIElement)_miniRoot : _fullRoot, userResizing);
+            SetVisible(_queuePanel, queue);
+            SetVisible(_heroArea, !mini && content >= heroMin);
+            SetOpacity(_heroArea, heroOpacity);
+            SetOpacity(_artworkSurface, artworkOpacity);
+            SetVisible(_compactTitle, compactOpacity > 0);
+            SetOpacity(_compactTitle, compactOpacity);
+            SetOpacity(_logo, heroOpacity);
+            SetOpacity(_appName, heroOpacity);
+            SetVisible(_volume, width >= UiTokens.Layout.VolumeSliderMinWindowWidth);
+
+            if (mini)
+            {
+                // Narrowed down to its buttons, the mini player drops the title and the inset kept
+                // for it, so the buttons sit optically centred between the two edges.
+                bool tight = width - MiniMinWidth() < UiTokens.Layout.MiniTitleMinSpace;
+                double left = tight ? UiTokens.Layout.MiniTightLeftInset : UiTokens.Layout.MiniLeftInset;
+                Thickness margin = _miniContent.Margin;
+                if (margin.Left != left)
+                    _miniContent.Margin = new Thickness(left, margin.Top, margin.Right, margin.Bottom);
+                _miniTitleText.Opacity = tight ? 0 : 1;
+                // Keep the elapsed time mirroring the duration's distance from the right edge.
+                double timeInset = tight ? margin.Right + 1 - left : 0;
+                if (_miniProgressRow.Margin.Left != timeInset)
+                    _miniProgressRow.Margin = new Thickness(timeInset, 0, 1, 0);
+            }
+        }
+
+        // A layout swap during a resize drag fades in from the background instead of popping.
+        // Outside a drag (mode button, startup) the morph or the plain swap is already right,
+        // and the morph photographs the layout, so it must be fully opaque at once.
+        private static void RevealLayout(UIElement layout, bool animate)
+        {
+            if (!animate || !WindowMorph.MotionEnabled)
+            {
+                layout.BeginAnimation(UIElement.OpacityProperty, null);
+                return;
+            }
+            DoubleAnimation fade = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(UiTokens.Motion.LayoutSwapFadeMs));
+            fade.EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut };
+            fade.FillBehavior = FillBehavior.Stop;
+            layout.BeginAnimation(UIElement.OpacityProperty, fade);
+        }
+
+        private static void SetOpacity(UIElement element, double opacity)
+        {
+            if (element.Opacity != opacity)
+                element.Opacity = opacity;
+        }
+
+        private static double Clamp01(double value)
+        {
+            return value < 0 ? 0 : (value > 1 ? 1 : value);
+        }
+
+        private static void SetVisible(UIElement element, bool visible)
+        {
+            Visibility value = visible ? Visibility.Visible : Visibility.Collapsed;
+            if (element.Visibility != value)
+                element.Visibility = value;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct NativePoint
+        {
+            public int X;
+            public int Y;
+        }
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetCursorPos(out NativePoint point);
 
         private static void TryApplyDwm(IntPtr hwnd)
         {

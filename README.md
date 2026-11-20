@@ -32,13 +32,15 @@ That became Listen.
 
 - **Focused audio playback** — MP3, WAV, WMA, M4A, AAC and FLAC
 - **Minimal interface** — playback controls without a media-library UI
-- **Mini player** — compact controls when you want Listen out of the way
+- **Mini player** — compact controls when you want Listen out of the way; resize it down to just its buttons
+- **Adaptive window** — shrink the player and it moves through artwork, compact and mini layouts
 - **Always on top** — keep the full player or mini player above other windows
 - **Play queue** — add several files and keep the queue between launches
 - **Drag & drop** — drop audio directly into the player or queue
 - **Repeat modes** — repeat the queue or the current track
 - **Artwork** — displays available Windows artwork with a lightweight fallback
 - **Taskbar controls** — Previous, Play/Pause, Next and Repeat from the Windows taskbar preview
+- **Media keys** — keyboard media keys, headset buttons and the Windows media panel
 - **Windows integration** — Open with Listen, Default Apps and File Explorer actions
 - **Local by default** — no account, telemetry, cloud library or network requirement for playback
 
