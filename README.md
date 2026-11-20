@@ -10,7 +10,7 @@ Native, minimal, and private.
 
 [**Download Listen →**](https://github.com/bemorin/listen/releases/latest)
 
-[Releases](https://github.com/bemorin/listen/releases) · [Bemorin](https://bemorin.com) · [MIT License](LICENSE.md)
+[Releases](https://github.com/bemorin/listen/releases) · [❤ Sponsor](https://github.com/sponsors/bemorin) · [Bemorin](https://bemorin.com) · [MIT License](LICENSE.md)
 
 </div>
 
@@ -83,7 +83,11 @@ Switch to mini mode when you only want the essentials on screen.
   <img src="docs/screenshots/listen-mini.png" alt="Listen mini player" width="612">
 </p>
 
-The mini player keeps the title, playback, progress and repeat controls available while using very little screen space. Narrow it and it keeps just its five buttons.
+The mini player keeps the title, playback, progress and repeat controls available while using very little screen space. Narrow it and it keeps just its five buttons:
+
+<p align="center">
+  <img src="docs/screenshots/listen-mini-compact.png" alt="Listen mini player narrowed to its five buttons" width="300">
+</p>
 
 The mini player stays above other windows; the full player can too, with **always on top**.
 
@@ -190,9 +194,15 @@ For larger changes, opening an issue first is a good way to discuss the directio
 
 ## Support Listen
 
-Listen is free and open source.
+Listen is free and open source, made and maintained in my spare time.
 
-If you find it useful, the easiest ways to support the project are to:
+If it earns a place on your desktop, the most direct way to keep it going is to **[sponsor Listen on GitHub](https://github.com/sponsors/bemorin)**. Even a small monthly amount helps fund the time that goes into it: new features, macOS and Linux polish, and keeping it small and fast.
+
+<p align="center">
+  <a href="https://github.com/sponsors/bemorin"><strong>❤ Sponsor Listen</strong></a>
+</p>
+
+Other ways to help:
 
 - ⭐ [star the repository](https://github.com/bemorin/listen)
 - share Listen with someone who might find it useful
