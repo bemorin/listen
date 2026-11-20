@@ -89,7 +89,7 @@ LISTEN_DATA_DIR=/tmp/listen cargo run -- song.flac other.mp3
 `LISTEN_DATA_DIR` keeps test state away from your real settings. In debug builds, or with `--features test-hooks`:
 
 - `LISTEN_SILENT=1` mutes the output.
-- `LISTEN_DEBUG_CMDS=<file>` drives the app from a command file (`mini`, `queue`, `play`, `next`, `prev`, `repeat`, `topmost`, `seek 0.5`, `size 500 300`), without synthetic input.
+- `LISTEN_DEBUG_CMDS=<file>` drives the app from a command file (`mini`, `queue`, `play`, `next`, `prev`, `repeat`, `topmost`, `seek 0.5`, `size 500 300`, `resize 500 74 1500` for a hand-like resize over 1.5 s, `drag 3 1 900` to drag queue row 3 to row 1), without synthetic input. `docs/listen-demo.mp4` was recorded this way.
 - `LISTEN_PAINT_LOG=<file>` logs the duration and size of every frame (Windows).
 - `LISTEN_AMBIENT=0|1|2` turns the ambient wash and the grain off for measurements.
 

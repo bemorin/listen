@@ -449,6 +449,18 @@ export component AppWindow inherits Window {
     // The queue follows playback: on each track change it glides to centre the playing row.
     changed current-index => { root.reveal-current(); }
     changed queue-shown => { root.reveal-current(); }
+    // Test hooks (demo recordings): lift queue row `from` by `dy`, then drop it.
+    public function demo-drag(from: int, dy: length) {
+        list.drag-from = from;
+        list.drag-dy = dy;
+    }
+    public function demo-drop() {
+        if (list.drag-from >= 0 && list.target != list.drag-from) {
+            root.move-item(list.drag-from, list.target);
+        }
+        list.drag-from = -1;
+        list.drag-dy = 0;
+    }
     function reveal-current() {
         if (root.current-index < 0 || !root.queue-shown) { return; }
         list.content-y = -clamp(root.current-index * 34px - (list.height - 32px) / 2, 0px, max(0px, list.content-height - list.height));
