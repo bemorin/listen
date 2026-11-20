@@ -21,6 +21,8 @@ symphonia = { version = "0.5", default-features = false, features = ["mp3", "fla
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 souvlaki = "0.9"
 sys-locale = "0.3"
+# Already in the binary through Slint's SVG support; renders the wordmark at pixel size.
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
 
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 rfd = { version = "0.18", default-features = false }
