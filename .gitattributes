@@ -1,0 +1,5 @@
+# Listen 1.x for Windows (WPF) is kept for reference; Listen 2 lives in cross/.
+# Keep the legacy code out of GitHub's language statistics.
+src/** linguist-vendored
+scripts/** linguist-vendored
+build-windows.bat linguist-vendored
