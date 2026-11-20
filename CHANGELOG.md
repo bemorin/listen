@@ -20,7 +20,7 @@ Listen 2: rewritten in Rust with a native UI, for **Windows, macOS and Linux**.
 - Settings and play queue imported from Listen 1.x on first launch.
 - Not yet in Listen 2: WMA files, File Explorer integration, taskbar preview buttons, single window when opening files while running.
 
-### Listen 1.x for Windows, unreleased changes (superseded by 2.0)
+## 1.1.0
 
 - Smooth, flicker-free transitions between the full player, the mini player and the play queue.
 - Expanding the mini player near a screen edge opens upward or sideways so the window stays on screen; collapsing returns to the same spot.
