@@ -27,9 +27,11 @@ jobs:
           - name: macOS arm64
             os: macos-latest
             target: macos-arm64
+          # Intel Macs: cross-compiled on Apple silicon (Intel runners are retired).
           - name: macOS x64
-            os: macos-13
+            os: macos-latest
             target: macos-x64
+            rust-target: x86_64-apple-darwin
           - name: Linux x64
             os: ubuntu-22.04
             target: linux-x64
@@ -49,16 +51,25 @@ jobs:
             libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: cross
 
       - name: Unit tests
+        if: matrix.rust-target == ''
         run: cargo test --release --locked
 
       - name: Build
-        run: cargo build --release --locked
+        run: |
+          if [ -n "${{ matrix.rust-target }}" ]; then
+            cargo build --release --locked --target "${{ matrix.rust-target }}"
+            mkdir -p target/release && cp "target/${{ matrix.rust-target }}/release/listen" target/release/listen
+          else
+            cargo build --release --locked
+          fi
 
       # The version: the tag on tagged builds (v2.0.0 -> 2.0.0), else Cargo.toml's.
       - name: Version
