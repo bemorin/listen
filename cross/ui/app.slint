@@ -1,0 +1,1166 @@
+// Listen: the whole window. Every layout change is a function of the window height, so a
+// resize drag or an animated window morph plays the same continuous transition: the artwork
+// shrinks and fades, the centred title gives way to the title-bar title, then the mini player.
+
+import { T, M, L, Tip } from "theme.slint";
+import { Glyph, IconButton, GlyphButton, SkipButton, PlayButton, RepeatButton, DotsButton, TextButton, Slider } from "controls.slint";
+
+export { T, L }
+
+export struct QueueItem {
+    title: string,
+    duration: string,
+    ext: string,
+}
+
+// "03:24" from seconds.
+global Fmt {
+    public pure function two(n: int) -> string {
+        return (n < 10 ? "0" : "") + n;
+    }
+    public pure function clock(seconds: float) -> string {
+        if (seconds >= 3600) {
+            return self.two(floor(seconds / 3600)) + ":" + self.two(mod(floor(seconds / 60), 60)) + ":" + self.two(mod(floor(seconds), 60));
+        }
+        return self.two(floor(seconds / 60)) + ":" + self.two(mod(floor(seconds), 60));
+    }
+}
+
+// Plus badge + label, the "add audio" affordance of the empty states.
+component AddHint inherits Rectangle {
+    in property <string> text;
+    in property <bool> interactive: true;
+    in property <length> font: 12px;
+    callback clicked;
+    width: row.preferred-width + (root.interactive ? 26px : 0px);
+    height: root.interactive ? 30px : 18px;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: ta.has-hover && root.interactive ? #343434 : transparent;
+    background: ta.has-hover && root.interactive ? (ta.pressed ? T.hover : T.elevated) : transparent;
+    animate background, border-color { duration: T.quick; }
+    row := HorizontalLayout {
+        alignment: center;
+        spacing: 8px;
+        if root.interactive: Rectangle {
+            y: (parent.height - self.height) / 2;
+            width: 19px;
+            height: 19px;
+            border-radius: 6px;
+            background: ta.has-hover ? T.hover : #232323;
+            border-width: 1px;
+            border-color: ta.has-hover ? #454545 : #343434;
+            animate background, border-color { duration: T.quick; }
+            Glyph {
+                width: 9px;
+                height: 9px;
+                bx: 6;
+                by: 6;
+                bw: 8;
+                bh: 8;
+                thickness: 1.45px;
+                color: ta.has-hover ? T.secondary : T.muted;
+                commands: "M10,6 L10,14 M6,10 L14,10";
+            }
+        }
+        Text {
+            text: root.text;
+            font-size: root.font;
+            color: ta.has-hover && root.interactive ? #B8B8B8 : T.muted;
+            vertical-alignment: center;
+            overflow: elide;
+            animate color { duration: T.quick; }
+        }
+    }
+    ta := TouchArea {
+        enabled: root.interactive;
+        mouse-cursor: root.interactive ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Shown while audio files are dragged over the window.
+component DropOverlay inherits Rectangle {
+    in property <bool> active;
+    in property <bool> compact;
+    in property <string> title;
+    in property <string> subtitle;
+    background: T.drop-overlay;
+    border-radius: root.compact ? 10px : 14px;
+    border-width: 1px;
+    border-color: T.accent;
+    opacity: root.active ? 1 : 0;
+    visible: self.opacity > 0.01;
+    animate opacity { duration: T.medium; easing: ease-out; }
+    VerticalLayout {
+        alignment: center;
+        spacing: root.compact ? 2px : 4px;
+        if !root.compact: HorizontalLayout {
+            alignment: center;
+            Rectangle {
+                width: root.active ? 38px : 30px;
+                height: self.width;
+                animate width { duration: T.slow; easing: M.spring; }
+                border-radius: 12px;
+                background: T.drop-badge;
+                border-width: 1px;
+                border-color: T.drop-badge-border;
+                Glyph {
+                    width: 16px;
+                    height: 16px;
+                    bx: 4;
+                    by: 4;
+                    bw: 12;
+                    bh: 12;
+                    thickness: 1.7px;
+                    color: T.accent;
+                    commands: "M10,4 L10,16 M4,10 L16,10";
+                }
+            }
+        }
+        Rectangle { height: root.compact ? 0px : 6px; }
+        Text {
+            text: root.title;
+            color: T.text;
+            font-size: root.compact ? 13px : 14px;
+            font-weight: 600;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: root.subtitle;
+            color: T.muted;
+            font-size: 10.5px;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+// Window-move surface: a press-and-drag hands the move to the OS once the pointer travels
+// a few pixels, so clicks and double-clicks on it stay ordinary clicks.
+component DragSurface inherits TouchArea {
+    callback start-drag;
+    property <length> px;
+    property <length> py;
+    property <bool> armed;
+    pointer-event(e) => {
+        if (e.button == PointerEventButton.left) {
+            if (e.kind == PointerEventKind.down) {
+                self.px = self.mouse-x;
+                self.py = self.mouse-y;
+                self.armed = true;
+            } else if (e.kind == PointerEventKind.up) {
+                self.armed = false;
+            }
+        }
+    }
+    moved => {
+        if (self.armed && self.pressed && (abs(self.mouse-x - self.px) > 3px || abs(self.mouse-y - self.py) > 3px)) {
+            self.armed = false;
+            root.start-drag();
+        }
+    }
+}
+
+// Three bars beside the current queue item: they rise when it plays and settle when it
+// pauses. Deliberately not looping, so an open queue costs no redraws while playing.
+component NowPlaying inherits Rectangle {
+    in property <bool> playing;
+    width: 11px;
+    height: 10px;
+    for i in 3: Rectangle {
+        property <[float]> levels: [0.55, 1.0, 0.7];
+        x: i * 4px;
+        width: 2.4px;
+        border-radius: 1px;
+        background: T.accent;
+        height: root.playing ? root.height * self.levels[i] : root.height * 0.3;
+        y: root.height - self.height;
+        animate height { duration: 260ms + i * 70ms; easing: M.spring; }
+    }
+}
+
+component QueueRow inherits Rectangle {
+    in property <QueueItem> item;
+    in property <bool> current;
+    in property <bool> selected;
+    in property <bool> playing;
+    in property <string> remove-tip;
+    callback select;
+    callback activate;
+    callback remove;
+    height: 32px;
+    border-radius: 7px;
+    background: root.selected ? T.list-selected : ta.has-hover ? T.list-hover : transparent;
+    animate background { duration: T.quick; }
+
+    ta := TouchArea {
+        clicked => { root.select(); }
+        double-clicked => { root.activate(); }
+    }
+    if root.current: NowPlaying {
+        x: 8px;
+        playing: root.playing;
+    }
+    Text {
+        x: 28px;
+        width: ext.x - self.x - 8px;
+        height: parent.height;
+        vertical-alignment: center;
+        overflow: elide;
+        font-size: 11.5px;
+        color: root.current ? T.text : T.secondary;
+        font-weight: root.current ? 600 : 400;
+        text: root.item.title;
+    }
+    ext := Text {
+        x: parent.width - self.width - 10px;
+        height: parent.height;
+        vertical-alignment: center;
+        font-size: 10px;
+        color: T.muted;
+        font-family: T.time-font;
+        text: root.item.duration == "" ? root.item.ext : root.item.duration + "  ·  " + root.item.ext;
+        opacity: ta.has-hover || remove.hovered ? 0 : 1;
+        animate opacity { duration: T.quick; }
+    }
+    remove := GlyphButton {
+        x: parent.width - self.width - 4px;
+        size: 24px;
+        radius: 7px;
+        glyph: 9px;
+        bx: 6;
+        by: 6;
+        bw: 8;
+        bh: 8;
+        thickness: 1.45px;
+        ink: T.muted;
+        tip: root.remove-tip;
+        commands: "M6,6 L14,14 M14,6 L6,14";
+        opacity: ta.has-hover || self.hovered ? 1 : 0;
+        animate opacity { duration: T.quick; }
+        clicked => { root.remove(); }
+    }
+}
+
+component MenuRow inherits Rectangle {
+    in property <string> text;
+    in property <string> hint;
+    in property <string> commands;
+    in property <float> bx: 3;
+    in property <float> by: 3;
+    in property <float> bw: 14;
+    in property <float> bh: 14;
+    in property <bool> active;
+    callback activated;
+    border-radius: 8px;
+    background: ta.pressed ? T.menu-pressed : ta.has-hover ? T.menu-hover : transparent;
+    animate background { duration: 90ms; }
+    Glyph {
+        x: 11px;
+        width: 15px * root.bw / max(root.bw, root.bh);
+        height: 15px * root.bh / max(root.bw, root.bh);
+        commands: root.commands;
+        bx: root.bx;
+        by: root.by;
+        bw: root.bw;
+        bh: root.bh;
+        thickness: 1.45px;
+        color: root.active ? T.accent : T.icon-muted;
+    }
+    Text {
+        x: 39px;
+        text: root.text;
+        color: T.text;
+        font-size: 12.5px;
+        vertical-alignment: center;
+        height: parent.height;
+    }
+    Text {
+        x: parent.width - self.width - 11px;
+        text: root.active ? "✓" : root.hint;
+        color: root.active ? T.accent : T.muted;
+        font-size: root.active ? 13px : 11px;
+        font-weight: root.active ? 600 : 400;
+        height: parent.height;
+        vertical-alignment: center;
+    }
+    ta := TouchArea {
+        clicked => { root.activated(); }
+    }
+}
+
+export component AppWindow inherits Window {
+    // ----- Platform -----
+    in property <bool> frameless: true;
+    in property <bool> mac: false;
+    in property <length> min-w: T.full-min-width;
+    in property <length> min-h: T.mini-height;
+
+    // ----- Playback state -----
+    in property <string> track-title;
+    in property <string> track-subtitle;
+    in property <bool> has-track;
+    in property <bool> playing;
+    in property <float> position-secs;
+    in property <float> duration-secs;
+    in property <bool> can-seek;
+    in property <float> volume: 0.82;
+    in property <int> repeat-mode;
+    in property <bool> topmost;
+    in property <image> artwork;
+    in property <bool> has-artwork;
+    in property <color> tint: #00000000;
+
+    // ----- Queue -----
+    in property <[QueueItem]> queue;
+    in property <int> current-index: -1;
+    in-out property <int> selected-index: -1;
+    in property <bool> queue-open;
+    // Height given to the queue drawer; the app animates it with the window.
+    in property <length> queue-extra;
+
+    // ----- Misc -----
+    in property <bool> dropping;
+    in property <bool> morphing;
+
+    // ----- Derived layout (read by the app) -----
+    out property <length> compact-height: T.compact-height;
+    out property <length> hero-min-height: T.hero-min-height;
+    out property <length> mini-min-width: T.mini-min-width;
+    out property <length> mini-height: T.mini-height;
+    out property <length> queue-height: T.queue-height;
+    out property <bool> queue-shown: root.queue-extra > 0 && root.height - root.queue-extra >= T.compact-height;
+    out property <length> content-h: root.queue-shown ? root.height - root.queue-extra : root.height;
+    out property <bool> mini: root.content-h < T.compact-height - 0.5px;
+
+    callback toggle-play();
+    callback previous();
+    callback next();
+    callback cycle-repeat();
+    callback seek(float);
+    callback nudge(float);
+    callback set-volume(float);
+    callback toggle-mute();
+    callback toggle-queue();
+    callback toggle-mini();
+    callback toggle-topmost();
+    callback minimize();
+    callback quit();
+    callback add-files();
+    callback play-index(int);
+    callback remove-index(int);
+    callback clear-queue();
+    callback start-drag();
+
+    title: root.has-track ? "Listen — " + root.track-title : "Listen";
+    icon: @image-url("../assets/icon-64.png");
+    background: T.bg;
+    no-frame: root.frameless;
+    resize-border-width: root.frameless ? 6px : 0px;
+    always-on-top: root.topmost || root.mini;
+    preferred-width: 500px;
+    preferred-height: 410px;
+    min-width: root.min-w;
+    min-height: root.min-h;
+    default-font-family: T.ui-font;
+
+    property <float> to-hero: clamp((root.content-h - T.hero-min-height) / T.fade-band, 0, 1);
+    property <float> hero-opacity: clamp(root.to-hero * 2 - 1, 0, 1);
+    property <float> compact-opacity: root.content-h < T.hero-min-height ? 1 : clamp(1 - root.to-hero * 2, 0, 1);
+    property <float> art-opacity: clamp((root.content-h - T.hero-min-height - T.artwork-fade-start) / T.fade-band, 0, 1);
+    property <bool> tight: root.width - T.mini-min-width < T.mini-title-min-space;
+    property <float> shown-progress: root.duration-secs > 0 ? clamp(root.position-secs / root.duration-secs, 0, 1) : 0;
+    property <string> shortcut: root.mac ? "⌘" : "Ctrl+";
+
+    // Strings
+    property <string> s-nothing: L.fr ? "Aucun titre" : "Nothing playing";
+    property <string> s-add-hint: L.fr ? "Ajouter un fichier ou le glisser ici" : "Add a file or drop it here";
+    property <string> s-topmost: L.fr ? "Toujours au-dessus" : "Always on top";
+    property <string> s-mini: L.fr ? "Mode mini" : "Mini player";
+    property <string> s-queue: L.fr ? "File d’attente" : "Play queue";
+    property <string> s-show-queue: L.fr ? "Afficher la file d’attente" : "Show play queue";
+    property <string> s-add-files: L.fr ? "Ajouter des fichiers…" : "Add audio files…";
+    property <string> s-quit: L.fr ? "Quitter" : "Quit";
+    property <string> s-repeat: root.repeat-mode == 1 ? (L.fr ? "Répéter la file d’attente" : "Repeat play queue") : root.repeat-mode == 2 ? (L.fr ? "Répéter ce titre" : "Repeat this track") : (L.fr ? "Répétition désactivée" : "Repeat off");
+
+
+    fs := FocusScope {
+        init => { self.focus(); }
+        key-pressed(e) => {
+            if (e.modifiers.control || e.modifiers.meta) {
+                if (e.text == "o" || e.text == "O") { root.add-files(); return accept; }
+                if (e.text == "m" || e.text == "M") { root.toggle-mini(); return accept; }
+                if (e.text == "t" || e.text == "T") { root.toggle-topmost(); return accept; }
+                if (e.text == "l" || e.text == "L") { root.toggle-queue(); return accept; }
+                if (e.text == "r" || e.text == "R") { root.cycle-repeat(); return accept; }
+                if (e.text == "q" || e.text == "Q" || e.text == "w" || e.text == "W") { root.quit(); return accept; }
+                return reject;
+            }
+            if (e.text == " ") { root.toggle-play(); return accept; }
+            if (e.text == Key.LeftArrow) { root.nudge(-5); return accept; }
+            if (e.text == Key.RightArrow) { root.nudge(5); return accept; }
+            if (e.text == Key.UpArrow) { root.set-volume(min(1, root.volume + 0.05)); return accept; }
+            if (e.text == Key.DownArrow) { root.set-volume(max(0, root.volume - 0.05)); return accept; }
+            if (e.text == Key.Delete && root.queue-shown && root.selected-index >= 0) { root.remove-index(root.selected-index); return accept; }
+            if (e.text == Key.Return && root.queue-shown && root.selected-index >= 0) { root.play-index(root.selected-index); return accept; }
+            if (e.text == Key.Escape && root.mini) { root.toggle-mini(); return accept; }
+            reject
+        }
+
+        // ================= Full player =================
+        full := Rectangle {
+            visible: !root.mini;
+            opacity: root.mini ? 0 : 1;
+            animate opacity { duration: 160ms; easing: ease-out; }
+            property <length> seek-y: root.content-h - T.controls-row - T.seek-row;
+            property <length> controls-y: root.content-h - T.controls-row;
+
+            DragSurface {
+                height: full.seek-y;
+                y: 0;
+                start-drag => { root.start-drag(); }
+            }
+
+            // ---- Title bar ----
+            Rectangle {
+                x: 10px;
+                y: 8px;
+                width: 28px;
+                height: 28px;
+                border-radius: 9px;
+                background: T.elevated;
+                border-width: 1px;
+                border-color: T.border;
+                opacity: root.hero-opacity;
+                Text {
+                    text: "♪";
+                    color: T.accent;
+                    font-size: 17px;
+                    font-weight: 600;
+                }
+            }
+            Text {
+                x: 47px;
+                y: 0;
+                height: T.top-bar;
+                vertical-alignment: center;
+                text: "Listen";
+                color: T.muted;
+                font-size: 12px;
+                opacity: root.hero-opacity;
+            }
+            compact-title := VerticalLayout {
+                x: 14px;
+                y: 4px;
+                width: window-buttons.x - self.x - 10px;
+                height: T.top-bar - 6px;
+                alignment: center;
+                visible: root.compact-opacity > 0;
+                opacity: root.compact-opacity;
+                Text {
+                    text: root.has-track ? root.track-title : root.s-nothing;
+                    color: T.text;
+                    font-size: 14px;
+                    font-weight: 600;
+                    overflow: elide;
+                }
+                Text {
+                    text: root.has-track ? root.track-subtitle : root.s-add-hint;
+                    color: T.muted;
+                    font-size: 11px;
+                    overflow: elide;
+                }
+            }
+            window-buttons := HorizontalLayout {
+                width: 4 * 30px + 3 * 2px;
+                x: parent.width - self.width - 8px;
+                y: (T.top-bar - 30px) / 2 + 1px;
+                height: 30px;
+                spacing: 2px;
+                GlyphButton {
+                    tip: root.s-topmost;
+                    commands: "M5,7 L14,7 L14,16 L5,16 Z M8,4 L17,4 L17,13";
+                    bx: 5;
+                    by: 4;
+                    bw: 12;
+                    bh: 12;
+                    glyph: 15px;
+                    ink: root.topmost ? T.accent : T.text;
+                    clicked => { root.toggle-topmost(); }
+                }
+                GlyphButton {
+                    tip: root.s-mini;
+                    commands: "M4,6 L16,6 L16,14 L4,14 Z M7,11 L13,11";
+                    bx: 4;
+                    by: 6;
+                    bw: 12;
+                    bh: 8;
+                    glyph: 15px;
+                    clicked => { root.toggle-mini(); }
+                }
+                GlyphButton {
+                    tip: L.fr ? "Réduire" : "Minimize";
+                    commands: "M5,10 L15,10";
+                    bx: 5;
+                    by: 5;
+                    bw: 10;
+                    bh: 10;
+                    glyph: 11px;
+                    clicked => { root.minimize(); }
+                }
+                close-button := GlyphButton {
+                    tip: L.fr ? "Fermer" : "Close";
+                    commands: "M6,6 L14,14 M14,6 L6,14";
+                    bx: 6;
+                    by: 6;
+                    bw: 8;
+                    bh: 8;
+                    glyph: 10px;
+                    ink: self.hovered ? #FFFFFF : T.text;
+                    rest: transparent;
+                    clicked => { root.quit(); }
+                }
+            }
+
+            // ---- Hero: artwork, title, subtitle ----
+            hero := Rectangle {
+                x: 22px;
+                y: T.top-bar + 14px;
+                width: parent.width - 44px;
+                height: max(0px, full.seek-y - self.y - 4px);
+                visible: root.content-h >= T.hero-min-height && root.hero-opacity > 0;
+                opacity: root.hero-opacity;
+                property <length> art-room: max(0px, self.height - T.title-block);
+                property <length> art-base: min(T.artwork, self.art-room);
+                // The artwork rests a little smaller while paused.
+                property <float> rest-scale: root.playing || !root.has-track ? 1 : 0.9;
+                animate rest-scale { duration: 520ms; easing: M.spring; }
+
+                // Soft halo in the artwork's own colour.
+                Rectangle {
+                    width: hero.art-base * 2.3;
+                    height: hero.art-base * 1.7;
+                    y: (hero.art-room - self.height) / 2;
+                    opacity: root.art-opacity * (root.has-artwork ? (root.playing ? 0.55 : 0.32) : 0);
+                    animate opacity { duration: 600ms; easing: ease-in-out; }
+                    background: @radial-gradient(circle, root.tint 0%, transparent 62%);
+                }
+                art := Rectangle {
+                    width: hero.art-base * hero.rest-scale;
+                    height: self.width;
+                    y: (hero.art-room - self.height) / 2;
+                    visible: root.art-opacity > 0 && self.width > 4px;
+                    opacity: root.art-opacity;
+                    border-radius: 20px * self.width / T.artwork;
+                    background: T.elevated;
+                    border-width: root.has-artwork ? 0px : 1px;
+                    border-color: T.border;
+                    drop-shadow-blur: root.has-artwork ? 18px * self.width / T.artwork : 0px;
+                    drop-shadow-offset-y: root.has-artwork ? 6px * self.width / T.artwork : 0px;
+                    drop-shadow-color: #00000070;
+                    clip: true;
+                    Text {
+                        visible: !root.has-artwork;
+                        text: "♪";
+                        color: T.art-text;
+                        font-size: 54px * art.width / T.artwork;
+                    }
+                    Image {
+                        visible: root.has-artwork;
+                        width: parent.width;
+                        height: parent.height;
+                        source: root.artwork;
+                        image-fit: cover;
+                        image-rendering: smooth;
+                    }
+                }
+                Text {
+                    y: hero.height - T.title-block + 10px;
+                    width: parent.width;
+                    height: 32px;
+                    text: root.has-track ? root.track-title : root.s-nothing;
+                    color: T.text;
+                    font-size: 22px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                if root.has-track: Text {
+                    y: hero.height - 30px;
+                    width: parent.width;
+                    height: 30px;
+                    text: root.track-subtitle;
+                    color: T.muted;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                if !root.has-track: AddHint {
+                    y: hero.height - 30px;
+                    text: root.s-add-hint;
+                    clicked => { root.add-files(); }
+                }
+                DropOverlay {
+                    active: root.dropping;
+                    title: L.fr ? "Déposez l’audio ici" : "Drop audio here";
+                    subtitle: L.fr ? "Ajout à la file · lecture immédiate si vide" : "Adds to queue · plays immediately when empty";
+                }
+            }
+            // A compact window still shows where to drop.
+            DropOverlay {
+                x: 12px;
+                y: 6px;
+                width: parent.width - 24px;
+                height: max(0px, full.seek-y - 6px);
+                compact: true;
+                active: root.dropping && !hero.visible;
+                title: L.fr ? "Déposez l’audio ici" : "Drop audio here";
+                subtitle: L.fr ? "Ajout à la file" : "Adds to the queue";
+            }
+
+            // ---- Seek row ----
+            seek-row := Rectangle {
+                x: 22px;
+                y: full.seek-y + 12px;
+                width: parent.width - 44px;
+                height: 26px;
+                elapsed := Text {
+                    x: 0;
+                    width: max(48px, self.preferred-width);
+                    height: parent.height;
+                    vertical-alignment: center;
+                    font-family: T.time-font;
+                    font-size: 13px;
+                    font-weight: 500;
+                    color: seek.dragging ? T.text : T.time;
+                    text: Fmt.clock(seek.dragging ? seek.shown * root.duration-secs : root.position-secs);
+                }
+                Text {
+                    x: parent.width - self.width;
+                    width: max(48px, self.preferred-width);
+                    height: parent.height;
+                    vertical-alignment: center;
+                    horizontal-alignment: right;
+                    font-family: T.time-font;
+                    font-size: 13px;
+                    font-weight: 500;
+                    color: T.time;
+                    text: root.duration-secs > 0 ? Fmt.clock(root.duration-secs) : "00:00";
+                }
+                seek := Slider {
+                    x: elapsed.width + 10px;
+                    width: parent.width - 2 * (elapsed.width + 10px);
+                    height: 26px;
+                    enabled: root.can-seek;
+                    value: root.shown-progress;
+                    commit(v) => { root.seek(v); }
+                }
+                // Time under the pointer.
+                Rectangle {
+                    property <bool> on: (seek.hovered || seek.dragging) && root.can-seek;
+                    x: seek.x + clamp(seek.hover-x, 0, seek.width) - self.width / 2;
+                    y: -24px;
+                    width: tip-time.preferred-width + 14px;
+                    height: 20px;
+                    border-radius: 6px;
+                    background: T.tooltip;
+                    border-width: 1px;
+                    border-color: T.strong-border;
+                    opacity: self.on ? 1 : 0;
+                    animate opacity { duration: T.quick; }
+                    tip-time := Text {
+                        text: Fmt.clock((seek.dragging ? seek.shown : seek.hover-value) * root.duration-secs);
+                        color: T.text;
+                        font-family: T.time-font;
+                        font-size: 11px;
+                    }
+                }
+            }
+
+            // ---- Controls row ----
+            controls := Rectangle {
+                x: 18px;
+                y: full.controls-y + 4px;
+                width: parent.width - 36px;
+                height: 52px;
+                property <bool> show-volume-slider: root.width >= T.volume-slider-min-width;
+
+                volume-button := GlyphButton {
+                    x: 0;
+                    size: 32px;
+                    glyph: 18px;
+                    tip: root.volume <= 0.001 ? (L.fr ? "Rétablir le son" : "Unmute") : (L.fr ? "Muet" : "Mute");
+                    bx: 3.5;
+                    by: 3.5;
+                    bw: 17;
+                    bh: 13;
+                    commands: root.volume <= 0.001
+                        ? "M4,8 L8,8 L12,4 L12,16 L8,12 L4,12 Z M15,8 L19,12 M19,8 L15,12"
+                        : root.volume < 0.45
+                            ? "M4,8 L8,8 L12,4 L12,16 L8,12 L4,12 Z M15,8 C16.5,9 16.5,11 15,12"
+                            : "M4,8 L8,8 L12,4 L12,16 L8,12 L4,12 Z M15,8 C16.5,9 16.5,11 15,12 M17,6 C20,8 20,12 17,14";
+                    clicked => { root.toggle-mute(); }
+                }
+                Slider {
+                    x: volume-button.width + 5px;
+                    width: 88px;
+                    height: 24px;
+                    visible: controls.show-volume-slider;
+                    wheel: true;
+                    value: root.volume;
+                    scrub(v) => { root.set-volume(v); }
+                    commit(v) => { root.set-volume(v); }
+                }
+
+                // Play sits on the window's centre whenever the side groups leave room.
+                property <length> left-end: controls.show-volume-slider ? 32px + 5px + 88px : 32px;
+                property <length> right-start: right-group.x;
+                property <length> stack-left: 42px + 6px;
+                property <length> stack-right: 6px + 42px + 4px + 28px;
+                property <length> ideal: self.width / 2;
+                property <length> centre: clamp(self.ideal, self.left-end + 8px + self.stack-left + 26px, self.right-start - 8px - self.stack-right - 26px);
+
+                SkipButton {
+                    x: controls.centre - 26px - 6px - self.width;
+                    size: 42px;
+                    radius: 10px;
+                    tip: L.fr ? "Précédent" : "Previous";
+                    clicked => { root.previous(); }
+                }
+                PlayButton {
+                    x: controls.centre - 26px;
+                    size: 52px;
+                    radius: 13px;
+                    glyph: 19px;
+                    playing: root.playing;
+                    tip: L.fr ? "Lecture / pause" : "Play / pause";
+                    clicked => { root.toggle-play(); }
+                }
+                SkipButton {
+                    x: controls.centre + 26px + 6px;
+                    size: 42px;
+                    radius: 10px;
+                    forward: true;
+                    tip: L.fr ? "Suivant" : "Next";
+                    clicked => { root.next(); }
+                }
+                RepeatButton {
+                    x: controls.centre + 26px + 6px + 42px + 4px;
+                    size: 28px;
+                    radius: 7px;
+                    mode: root.repeat-mode;
+                    tip: root.s-repeat;
+                    clicked => { root.cycle-repeat(); }
+                }
+
+                right-group := HorizontalLayout {
+                    width: 2 * 32px + 2px;
+                    x: parent.width - self.width;
+                    height: 32px;
+                    spacing: 2px;
+                    GlyphButton {
+                        size: 32px;
+                        glyph: 15px;
+                        tip: root.s-queue;
+                        bx: 5;
+                        by: 6;
+                        bw: 10;
+                        bh: 8;
+                        ink: root.queue-open ? T.accent : T.text;
+                        commands: "M5,6 L15,6 M5,10 L15,10 M5,14 L15,14";
+                        clicked => { root.toggle-queue(); }
+                    }
+                    more := DotsButton {
+                        size: 32px;
+                        tip: L.fr ? "Plus" : "More";
+                        clicked => {
+                            menu.show();
+                        }
+                    }
+                }
+            }
+
+            // ---- Queue drawer ----
+            drawer := Rectangle {
+                y: root.content-h;
+                height: root.queue-shown ? root.queue-extra : 0px;
+                clip: true;
+                Rectangle {
+                    y: 0;
+                    height: T.queue-height;
+                    background: T.panel;
+                    Rectangle {
+                        y: 0;
+                        height: 1px;
+                        background: T.border;
+                    }
+                    // Header
+                    HorizontalLayout {
+                        x: 18px;
+                        y: 10px;
+                        width: parent.width - 36px;
+                        height: 24px;
+                        spacing: 8px;
+                        Text {
+                            text: root.s-queue;
+                            color: T.text;
+                            font-size: 12px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.queue.length;
+                            color: T.muted;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                            font-family: T.time-font;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        TextButton {
+                            text: L.fr ? "Ajouter" : "Add";
+                            clicked => { root.add-files(); }
+                        }
+                        TextButton {
+                            text: L.fr ? "Retirer" : "Remove";
+                            enabled: root.selected-index >= 0 && root.selected-index < root.queue.length;
+                            clicked => { root.remove-index(root.selected-index); }
+                        }
+                        TextButton {
+                            text: L.fr ? "Vider" : "Clear";
+                            enabled: root.queue.length > 0;
+                            clicked => { root.clear-queue(); }
+                        }
+                    }
+                    // List
+                    list-area := Rectangle {
+                        x: 14px;
+                        y: 42px;
+                        width: parent.width - 28px;
+                        height: T.queue-height - 42px - 10px;
+                        list := Flickable {
+                            width: parent.width - 12px;
+                            x: 0;
+                            content-height: max(self.height, root.queue.length * 34px);
+                            for item[i] in root.queue: QueueRow {
+                                y: i * 34px;
+                                width: list.width;
+                                item: item;
+                                current: i == root.current-index;
+                                selected: i == root.selected-index;
+                                playing: root.playing;
+                                remove-tip: L.fr ? "Retirer" : "Remove";
+                                select => { root.selected-index = i; fs.focus(); }
+                                activate => { root.play-index(i); }
+                                remove => { root.remove-index(i); }
+                            }
+                        }
+                        // Overlay scrollbar
+                        Rectangle {
+                            property <float> span: list.content-height > list.height ? list.height / list.content-height : 1;
+                            property <bool> hot: bar-ta.has-hover || bar-ta.pressed;
+                            x: parent.width - 7px;
+                            width: 8px;
+                            visible: self.span < 1;
+                            bar-ta := TouchArea {
+                                property <length> grab;
+                                pointer-event(e) => {
+                                    if (e.kind == PointerEventKind.down) {
+                                        self.grab = self.mouse-y - thumb.y;
+                                    }
+                                }
+                                moved => {
+                                    if (self.pressed) {
+                                        list.content-y = -clamp((self.mouse-y - self.grab) / max(1px, parent.height - thumb.height), 0, 1) * (list.content-height - list.height);
+                                    }
+                                }
+                            }
+                            thumb := Rectangle {
+                                x: (parent.width - self.width) / 2;
+                                width: parent.hot ? 6px : 3px;
+                                height: max(24px, parent.height * parent.span);
+                                y: (parent.height - self.height) * (-list.content-y / max(1px, list.content-height - list.height));
+                                border-radius: self.width / 2;
+                                background: bar-ta.pressed ? #8A8A8A : parent.hot ? T.scroll-thumb-hover : T.scroll-thumb;
+                                animate width, background { duration: T.quick; }
+                            }
+                        }
+                        if root.queue.length == 0: AddHint {
+                            text: L.fr ? "Glissez des fichiers audio ici" : "Drop audio files here";
+                            font: 11px;
+                            clicked => { root.add-files(); }
+                        }
+                        DropOverlay {
+                            compact: true;
+                            active: root.dropping;
+                            title: L.fr ? "Déposez pour ajouter" : "Drop to add";
+                            subtitle: L.fr ? "Ajouter à la file d’attente" : "Add to play queue";
+                        }
+                    }
+                }
+            }
+        }
+
+        // ================= Mini player =================
+        mini := Rectangle {
+            visible: root.mini;
+            opacity: root.mini ? 1 : 0;
+            animate opacity { duration: 160ms; easing: ease-out; }
+            property <length> left: root.tight ? T.mini-tight-left : T.mini-left;
+            property <length> row-h: root.content-h - 10px - 18px;
+
+            DragSurface {
+                height: root.content-h;
+                start-drag => { root.start-drag(); }
+                double-clicked => { root.toggle-mini(); }
+            }
+            Text {
+                x: mini.left;
+                y: 5px;
+                width: max(0px, mini-controls.x - self.x - 10px);
+                height: mini.row-h;
+                vertical-alignment: center;
+                text: root.has-track ? root.track-title : "Listen";
+                color: T.text;
+                font-size: 13px;
+                font-weight: 600;
+                overflow: elide;
+                opacity: root.tight ? 0 : 1;
+                animate opacity { duration: T.quick; }
+            }
+            mini-controls := HorizontalLayout {
+                width: T.mini-controls;
+                x: parent.width - self.width - T.mini-right;
+                y: 5px + (mini.row-h - self.height) / 2;
+                height: 44px;
+                padding-left: 2px;
+                spacing: 4px;
+                alignment: center;
+                SkipButton {
+                    y: (parent.height - self.height) / 2;
+                    size: 34px;
+                    radius: 10px;
+                    glyph: 17px;
+                    tip: L.fr ? "Précédent" : "Previous";
+                    clicked => { root.previous(); }
+                }
+                PlayButton {
+                    y: (parent.height - self.height) / 2;
+                    size: 40px;
+                    radius: 10px;
+                    glyph: 20px;
+                    playing: root.playing;
+                    tip: L.fr ? "Lecture / pause" : "Play / pause";
+                    clicked => { root.toggle-play(); }
+                }
+                SkipButton {
+                    y: (parent.height - self.height) / 2;
+                    size: 34px;
+                    radius: 10px;
+                    glyph: 17px;
+                    forward: true;
+                    tip: L.fr ? "Suivant" : "Next";
+                    clicked => { root.next(); }
+                }
+                RepeatButton {
+                    y: (parent.height - self.height) / 2;
+                    size: 24px;
+                    radius: 7px;
+                    small: true;
+                    mode: root.repeat-mode;
+                    tip: root.s-repeat;
+                    clicked => { root.cycle-repeat(); }
+                }
+                GlyphButton {
+                    y: (parent.height - self.height) / 2;
+                    size: 24px;
+                    radius: 7px;
+                    glyph: 12px;
+                    bx: 0;
+                    by: 0;
+                    bw: 8;
+                    bh: 8;
+                    thickness: 1.65px;
+                    tip: L.fr ? "Agrandir" : "Expand";
+                    commands: "M2.7,5.3 L8,0 M5,0 L8,0 L8,3 M5.3,2.7 L0,8 M0,5 L0,8 L3,8";
+                    clicked => { root.toggle-mini(); }
+                }
+            }
+            // Progress
+            Rectangle {
+                property <length> inset: root.tight ? T.mini-right + 1px - mini.left : 0px;
+                x: mini.left + self.inset;
+                y: root.content-h - 5px - 18px;
+                width: parent.width - mini.left - T.mini-right - 1px - self.inset;
+                height: 18px;
+                Text {
+                    x: 0;
+                    width: 39px;
+                    height: parent.height;
+                    vertical-alignment: center;
+                    font-family: T.time-font;
+                    font-size: 11.5px;
+                    font-weight: 500;
+                    color: mini-seek.dragging ? T.text : T.time;
+                    text: Fmt.clock(mini-seek.dragging ? mini-seek.shown * root.duration-secs : root.position-secs);
+                }
+                mini-seek := Slider {
+                    x: 42px;
+                    width: parent.width - 84px;
+                    height: parent.height;
+                    show-thumb: false;
+                    track: 3px;
+                    enabled: root.can-seek;
+                    value: root.shown-progress;
+                    commit(v) => { root.seek(v); }
+                }
+                Text {
+                    x: parent.width - self.width;
+                    width: 39px;
+                    height: parent.height;
+                    vertical-alignment: center;
+                    horizontal-alignment: right;
+                    font-family: T.time-font;
+                    font-size: 11.5px;
+                    font-weight: 500;
+                    color: T.time;
+                    text: root.duration-secs > 0 ? Fmt.clock(root.duration-secs) : "00:00";
+                }
+            }
+            DropOverlay {
+                x: 4px;
+                y: 4px;
+                width: parent.width - 8px;
+                height: root.content-h - 8px;
+                compact: true;
+                active: root.dropping;
+                title: L.fr ? "Déposez pour ajouter" : "Drop to add";
+                subtitle: "";
+            }
+        }
+    }
+
+    // ================= More menu =================
+    menu := PopupWindow {
+        property <int> rows: 5;
+        property <length> natural-row: 36px;
+        property <length> seps: 2 * 11px;
+        // Rows shrink to fit a short window.
+        property <length> row-h: clamp((root.height - 12px - 12px - self.seps) / self.rows, 26px, self.natural-row);
+        width: 280px;
+        height: self.rows * self.row-h + self.seps + 12px;
+        x: clamp(more.absolute-position.x + more.width - self.width, 6px, root.width - self.width - 6px);
+        y: clamp(more.absolute-position.y - self.height - 6px, 6px, root.height - self.height - 6px);
+        Rectangle {
+            background: T.elevated;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: T.strong-border;
+            drop-shadow-blur: 20px;
+            drop-shadow-offset-y: 8px;
+            drop-shadow-color: #00000057;
+            VerticalLayout {
+                padding: 6px;
+                MenuRow {
+                    height: menu.row-h;
+                    text: root.s-topmost;
+                    hint: root.shortcut + "T";
+                    active: root.topmost;
+                    commands: "M5,7 L14,7 L14,16 L5,16 Z M8,4 L17,4 L17,13";
+                    bx: 5;
+                    by: 4;
+                    bw: 12;
+                    bh: 12;
+                    activated => { root.toggle-topmost(); }
+                }
+                MenuRow {
+                    height: menu.row-h;
+                    text: root.s-mini;
+                    hint: root.shortcut + "M";
+                    active: root.mini;
+                    commands: "M4,6 L16,6 L16,14 L4,14 Z M7,11 L13,11";
+                    bx: 4;
+                    by: 6;
+                    bw: 12;
+                    bh: 8;
+                    activated => { root.toggle-mini(); }
+                }
+                MenuRow {
+                    height: menu.row-h;
+                    text: root.s-show-queue;
+                    hint: root.shortcut + "L";
+                    active: root.queue-open;
+                    commands: "M5,6 L15,6 M5,10 L15,10 M5,14 L15,14";
+                    bx: 5;
+                    by: 6;
+                    bw: 10;
+                    bh: 8;
+                    activated => { root.toggle-queue(); }
+                }
+                Rectangle {
+                    height: 11px;
+                    Rectangle {
+                        x: 8px;
+                        width: parent.width - 16px;
+                        height: 1px;
+                        background: T.menu-sep;
+                    }
+                }
+                MenuRow {
+                    height: menu.row-h;
+                    text: root.s-add-files;
+                    hint: root.shortcut + "O";
+                    commands: "M10,4 L10,16 M4,10 L16,10";
+                    bx: 4;
+                    by: 4;
+                    bw: 12;
+                    bh: 12;
+                    activated => { root.add-files(); }
+                }
+                Rectangle {
+                    height: 11px;
+                    Rectangle {
+                        x: 8px;
+                        width: parent.width - 16px;
+                        height: 1px;
+                        background: T.menu-sep;
+                    }
+                }
+                MenuRow {
+                    height: menu.row-h;
+                    text: root.s-quit;
+                    hint: root.shortcut + "Q";
+                    commands: "M4,4 L14,14 M14,4 L4,14";
+                    bx: 4;
+                    by: 4;
+                    bw: 10;
+                    bh: 10;
+                    activated => { root.quit(); }
+                }
+            }
+        }
+    }
+
+    // ================= Tooltip =================
+    tooltip := Rectangle {
+        property <bool> below: Tip.top - 30px < 4px;
+        width: tip-text.preferred-width + 16px;
+        height: 24px;
+        x: clamp(Tip.x - self.width / 2, 4px, root.width - self.width - 4px);
+        y: self.below ? Tip.bottom + 6px : Tip.top - self.height - 6px;
+        border-radius: 7px;
+        background: T.tooltip;
+        border-width: 1px;
+        border-color: T.strong-border;
+        opacity: Tip.shown ? 1 : 0;
+        visible: self.opacity > 0.01;
+        animate opacity { duration: T.quick; easing: ease-out; }
+        tip-text := Text {
+            text: Tip.text;
+            color: T.text;
+            font-size: 11px;
+        }
+    }
+}
