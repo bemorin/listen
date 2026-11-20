@@ -5,6 +5,17 @@ It keeps the look and behaviour of the Windows app (`../src`, WPF), and refines 
 
 The WPF app stays the reference implementation and is untouched. This folder is self-contained.
 
+<p align="center">
+  <img src="../docs/screenshots/listen-full.png" alt="Listen, full player" width="560">
+</p>
+
+<p align="center">
+  <img src="../docs/screenshots/listen-queue.png" alt="Listen with the play queue open" width="380">
+  <img src="../docs/screenshots/listen-mini.png" alt="Listen mini player" width="440">
+</p>
+
+The screenshots use generated demo tracks and covers. The ambient light around the artwork comes from each track's own cover.
+
 ## Stack decision
 
 The goal was the lightest possible footprint (binary size and memory) on three operating systems, with a fully custom UI.
@@ -144,7 +155,7 @@ Apple-grade polish, without new weight:
 
 - **Ambient wash, cheaply.** The two artwork glows are rendered once per track into a small image that the window stretches smoothly. Full-window radial gradients cost a lot to draw with the software renderer, and a window morph repaints everything on every step.
 - **Light and glass.** The interface is neutral: white glyphs, a white progress bar, and translucent "glass" surfaces with a faint highlight edge (queue drawer, menu, tooltips, pills). The colour comes from the music. Two colours sampled from the artwork, made vivid enough to read as light, bleed softly into the window and cross-fade on track change. Without artwork, the window uses a quiet warm/cool duotone. A fine grain keeps these very soft gradients from banding.
-- **New mark.** The orange note becomes a silver disc with a sound wave carved through it; the wave's central peaks draw an M. The icon has no tile and a transparent background, like other taskbar and dock icons. Below 32 px, the wave has fewer oscillations and a thicker line, so it stays legible. A faint edge keeps the disc defined on light taskbars. The same disc is the title-bar logo. It follows playback: the wave shows while music plays and flattens to a straight line, edge to edge, while paused. The change is a single spring per state change, with no looping animation. Next to it, the wordmark "listen" is drawn as bold geometric strokes with round terminals. It uses no font, so it looks the same on every OS, and it is lighter than bold, with open spacing, and sized below the mark. `assets/make-icon.ps1` renders the PNGs and `assets/make-ico.py` packs `listen.ico`. The palette stays black, white and silver: the queue's now-playing bars are a silver gradient. The Windows app's icon in `../build` is unchanged.
+- **New mark.** The orange note becomes a silver disc with a sound wave carved through it; the wave's central peaks draw an M. The icon has no tile and a transparent background, like other taskbar and dock icons. Below 32 px, the wave has fewer oscillations and a thicker line, so it stays legible. A faint edge keeps the disc defined on light taskbars. The same disc is the title-bar logo. It follows playback: the wave shows while music plays and flattens to a straight line, edge to edge, while paused. The change is a single spring per state change, with no looping animation. Next to it is the wordmark "listen": geometric strokes with round terminals, lighter than bold, openly spaced and sized below the mark. It uses no font, so it looks the same on every OS. The app renders it itself at the screen's exact pixel size (`src/wordmark.rs`, with tiny-skia, already in the binary through Slint). Like a hinted font, it uses a whole-pixel stroke and centres every vertical stem on the pixel grid, then shows the result 1:1, so it stays crisp. It is rendered again when the window moves to a monitor with another scale. `assets/make-icon.ps1` renders the PNGs and `assets/make-ico.py` packs `listen.ico`. The palette stays black, white and silver: the queue's now-playing bars are a silver gradient. The Windows app's icon in `../build` is unchanged.
 - **Play disc.** Play and pause sit on a light disc with a dark glyph, like a system Now Playing control. It brightens under the pointer and dips when pressed. All other buttons light up as soft circles. Toggle glyphs (always on top, queue, repeat) stay white like every other button; when on, a glass disc sits behind them. Repeat is the same 32 px size as the queue and menu buttons.
 
 - **Artwork.** Embedded cover art is read from MP3, FLAC and M4A tags, or from `cover.jpg` / `folder.jpg` next to the file. It sits on a soft halo tinted with the artwork's own colour, and rests 10 % smaller while paused, with a spring.
@@ -229,5 +240,6 @@ cross/
   src/media.rs           media keys and OS media panel (souvlaki)
   src/remote/            remote mode: other apps' playback (mod.rs; windows.rs GSMTC; linux.rs MPRIS)
   src/dialogs.rs         "Add audio files" dialog
+  src/wordmark.rs        the "listen" wordmark, rendered at pixel size
   bench/                 hello-window comparison and the memory measurement script
 ```

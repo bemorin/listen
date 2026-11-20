@@ -7,6 +7,7 @@ mod meta;
 mod platform;
 mod remote;
 mod state;
+mod wordmark;
 
 use platform::Rect;
 use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
@@ -258,6 +259,18 @@ impl App {
         if sel >= self.state.queue.len() as i32 {
             ui.set_selected_index(self.state.queue.len() as i32 - 1);
         }
+    }
+
+    /// Renders the wordmark for the window's current scale (and again on a monitor change).
+    fn update_wordmark(&self, scale: f32) {
+        let Some((w, h, rgba)) = wordmark::render(scale, 1.0) else { return };
+        let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(&rgba, w, h);
+        let ui = self.ui();
+        ui.set_wordmark(slint::Image::from_rgba8_premultiplied(buffer));
+        ui.set_wordmark_w(w as f32 / scale);
+        ui.set_wordmark_h(h as f32 / scale);
+        let top_bar = 42.0 * scale;
+        ui.set_wordmark_y((((top_bar - h as f32) / 2.0) + scale).round() / scale);
     }
 
     /// Cross-fades the window's ambient wash to one made from two glow colours.
@@ -1587,6 +1600,10 @@ fn main() -> Result<(), slint::PlatformError> {
         platform::style_window(&winit_window);
         #[cfg(windows)]
         platform::erase::set_after_paint(|| with_app(|a| a.on_frame_presented()));
+        with_app(|a| {
+            let scale = a.scale() as f32;
+            a.update_wordmark(scale);
+        });
         drop(winit_window);
         ui.window().on_winit_window_event(|_, event| {
             use winit::event::WindowEvent;
@@ -1613,7 +1630,8 @@ fn main() -> Result<(), slint::PlatformError> {
                         })
                     });
                 }),
-                WindowEvent::ScaleFactorChanged { .. } => with_app(|a| {
+                WindowEvent::ScaleFactorChanged { scale_factor, .. } => with_app(|a| {
+                    a.update_wordmark(*scale_factor as f32);
                     a.dpi_change_until = Some(Instant::now() + Duration::from_millis(500));
                     a.resize_start = None;
                     a.resize_settle.stop();
