@@ -1,10 +1,9 @@
-name: Listen cross-platform
+name: Listen
 
 on:
   push:
-    paths:
-      - "cross/**"
-      - ".github/workflows/cross.yml"
+    branches: ["**"]
+    tags: ["v*"]
   pull_request:
     paths:
       - "cross/**"
@@ -24,16 +23,16 @@ jobs:
         include:
           - name: Windows x64
             os: windows-latest
-            artifact: Listen-windows-x64
+            target: windows-x64
           - name: macOS arm64
             os: macos-latest
-            artifact: Listen-macos-arm64
+            target: macos-arm64
           - name: macOS x64
             os: macos-13
-            artifact: Listen-macos-x64
+            target: macos-x64
           - name: Linux x64
             os: ubuntu-22.04
-            artifact: Listen-linux-x64
+            target: linux-x64
     defaults:
       run:
         working-directory: cross
@@ -61,21 +60,33 @@ jobs:
       - name: Build
         run: cargo build --release --locked
 
+      # The version: the tag on tagged builds (v2.0.0 -> 2.0.0), else Cargo.toml's.
+      - name: Version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF#refs/tags/v}"
+          else
+            version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "ARCHIVE=Listen-$version-${{ matrix.target }}" >> "$GITHUB_ENV"
+
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: |
-          mkdir -p dist
-          cp target/release/listen.exe dist/Listen.exe
-          ls -l dist
+          mkdir -p dist/Listen
+          cp target/release/listen.exe dist/Listen/Listen.exe
+          cp ../LICENSE.md dist/Listen/
+          cd dist && 7z a -tzip "$ARCHIVE.zip" Listen >/dev/null
+          ls -l
 
       - name: Package (macOS app bundle)
         if: runner.os == 'macOS'
         run: |
-          version=$(cat ../VERSION | tr -d '[:space:]')
           app=dist/Listen.app/Contents
           mkdir -p "$app/MacOS" "$app/Resources"
           cp target/release/listen "$app/MacOS/listen"
-          sed "s/__VERSION__/$version/g" assets/macos/Info.plist > "$app/Info.plist"
+          sed "s/__VERSION__/$VERSION/g" assets/macos/Info.plist > "$app/Info.plist"
           # Icon from cross/assets/icon-512.png.
           iconset=$(mktemp -d)/Listen.iconset
           mkdir -p "$iconset"
@@ -85,17 +96,39 @@ jobs:
           done
           iconutil -c icns "$iconset" -o "$app/Resources/Listen.icns" || true
           codesign --force --deep --sign - dist/Listen.app || true
-          ls -l "$app/MacOS"
+          cd dist && ditto -c -k --keepParent Listen.app "$ARCHIVE.zip"
+          ls -l
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
-          mkdir -p dist
-          cp target/release/listen dist/listen
+          mkdir -p "dist/Listen"
+          cp target/release/listen dist/Listen/listen
+          cp ../LICENSE.md dist/Listen/
+          tar -C dist -czf "dist/$ARCHIVE.tar.gz" Listen
           ls -l dist
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: cross/dist
+          name: ${{ env.ARCHIVE }}
+          path: |
+            cross/dist/*.zip
+            cross/dist/*.tar.gz
           if-no-files-found: error
+
+  # A pushed v* tag publishes the four archives as a GitHub Release.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

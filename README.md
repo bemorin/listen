@@ -47,11 +47,11 @@ That became Listen.
 
 ## Lightweight by design
 
-Listen is written in Rust with a native UI ([Slint](https://slint.dev), software renderer). There is no browser engine and no runtime. The audio device opens on Play and is released after a pause. While playing, the window redraws only as often as the progress bar needs to glide.
+Listen 2 is written in Rust with a native UI ([Slint](https://slint.dev), software renderer). There is no browser engine and no runtime. The audio device opens on Play and is released after a pause. While playing, the window redraws only as often as the progress bar needs to glide.
 
 Measured on Windows 11 while playing the same 4-minute MP3 (memory as shown in Task Manager):
 
-| | Listen 1.x (Windows, WPF) | Listen, cross-platform |
+| | Listen 1.x (previous Windows version) | Listen 2 |
 | --- | --- | --- |
 | Memory while playing | 38.9 MB | **5.3 MB** |
 | Memory at idle | 49.8 MB | **4.7 MB** |
@@ -62,14 +62,18 @@ Details and methodology: [`cross/README.md`](cross/README.md).
 
 ## Quick start
 
-Download Listen from [GitHub Releases](https://github.com/bemorin/listen/releases/latest).
+Download the archive for your system from [GitHub Releases](https://github.com/bemorin/listen/releases/latest):
 
-The current release is **Listen 1.x for Windows**:
+| System | File | Then |
+| --- | --- | --- |
+| Windows 10/11 (x64) | `Listen-<version>-windows-x64.zip` | Extract it anywhere and launch `Listen.exe`. No installation and no administrator rights required. |
+| macOS 11+ (Apple silicon) | `Listen-<version>-macos-arm64.zip` | Extract it and move `Listen.app` to Applications. |
+| macOS 11+ (Intel) | `Listen-<version>-macos-x64.zip` | Same as above. |
+| Linux (x64) | `Listen-<version>-linux-x64.tar.gz` | Extract it and run `./listen`. |
 
-- `Listen-Setup-<version>.exe`: installs Listen for your Windows user and registers it with Windows. No administrator rights are required.
-- `Listen-Portable-<version>.zip`: extract it and launch `Listen.exe`. No installation required.
-
-The **cross-platform version** shown on this page lives in [`cross/`](cross/). Builds for Windows, macOS (Apple silicon and Intel) and Linux are produced by [GitHub Actions](.github/workflows/cross.yml) and will be attached to the next release. Until then, take the build artifacts from a workflow run, or [build from source](#build-from-source).
+- **macOS**: the app is not notarized yet, so the first time, right-click `Listen.app` and choose **Open**.
+- **Linux**: Listen uses ALSA and D-Bus, which every desktop has. The "Add audio files" dialog uses `zenity` (GNOME) or `kdialog` (KDE).
+- **Coming from Listen 1.x on Windows**: your play queue and settings are imported on first launch, and Listen 1.x is left untouched. Uninstall it from Windows Settings whenever you like.
 
 ## Mini player
 
@@ -134,34 +138,28 @@ Local state is stored in:
 
 ## Build from source
 
-**Cross-platform version** (Rust):
+Listen 2 lives in [`cross/`](cross/). With a stable Rust toolchain:
 
 ```sh
 cd cross
 cargo build --release
 ```
 
-The app is `cross/target/release/listen` (`listen.exe` on Windows). Linux needs a few development packages; see [`cross/README.md`](cross/README.md#build).
+The app is `cross/target/release/listen` (`listen.exe` on Windows). Linux needs a few development packages; see [`cross/README.md`](cross/README.md#build). No Electron, Chromium, Node.js or bundled browser runtime is required.
 
-**Listen 1.x for Windows** (WPF and .NET Framework). Run:
+Every change is built and tested for Windows, macOS and Linux by [GitHub Actions](.github/workflows/cross.yml). Pushing a `v*` tag publishes the archives above to a GitHub Release.
 
-```bat
-build-windows.bat
-```
-
-A successful release build creates the installer and portable package inside `release/`.
-
-Neither needs Electron, Chromium, Node.js or a bundled browser runtime.
+The previous Windows app (Listen 1.x, WPF) is kept in [`src/`](src/) for reference and still builds with `build-windows.bat`.
 
 ## Platform support
 
-The cross-platform version runs on **Windows, macOS and Linux**.
+Listen 2 runs on **Windows, macOS and Linux**.
 
-It has been used and tested on Windows 11. The macOS and Linux builds are compiled and unit-tested on every change, but have not yet been tested by hand.
+It has been used and tested day to day on Windows 11. The macOS and Linux builds are compiled and unit-tested on every change; feedback from those systems is very welcome.
 
-A few things are still specific to **Listen 1.x for Windows**:
+Not yet in Listen 2 (these were in Listen 1.x for Windows):
 
-- **WMA files**: there is no open-source WMA decoder the cross-platform version could use
+- **WMA files**: there is no open-source WMA decoder Listen could use on every system
 - **File Explorer integration**: Open with Listen, Default Apps, Play with Listen and Add to Listen play queue
 - **Taskbar preview buttons**
 - **A single window** when files are opened while Listen is already running
