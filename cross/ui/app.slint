@@ -192,16 +192,45 @@ component QueueRow inherits Rectangle {
     in property <bool> playing;
     in property <float> wave;
     in property <string> remove-tip;
+    in property <bool> lifted;
     callback select;
     callback activate;
     callback remove;
+    // Press and drag vertically to reorder; `dy` is the pointer's travel since the press.
+    callback drag-move(length);
+    callback drag-end();
     height: 32px;
     border-radius: 7px;
-    background: root.selected ? T.list-selected : ta.has-hover ? T.list-hover : transparent;
+    background: root.lifted ? #2E2E2E : root.selected ? T.list-selected : ta.has-hover ? T.list-hover : transparent;
     animate background { duration: T.quick; }
+    drop-shadow-blur: root.lifted ? 12px : 0px;
+    drop-shadow-offset-y: root.lifted ? 4px : 0px;
+    drop-shadow-color: #00000080;
 
     ta := TouchArea {
-        clicked => { root.select(); }
+        property <length> start;
+        property <bool> dragging;
+        pointer-event(e) => {
+            if (e.button != PointerEventButton.left) { return; }
+            if (e.kind == PointerEventKind.down) {
+                self.start = root.absolute-position.y + self.mouse-y;
+                self.dragging = false;
+            } else if (e.kind == PointerEventKind.up && self.dragging) {
+                self.dragging = false;
+                root.drag-end();
+            }
+        }
+        moved => {
+            if (!self.pressed) { return; }
+            // Pointer travel in window space, independent of the row moving under it.
+            if (self.dragging || abs(root.absolute-position.y + self.mouse-y - self.start) > 4px) {
+                self.dragging = true;
+                root.drag-move(root.absolute-position.y + self.mouse-y - self.start);
+            }
+        }
+        clicked => {
+            if (!self.dragging) { root.select(); }
+        }
         double-clicked => { root.activate(); }
     }
     if root.current: NowPlaying {
@@ -364,6 +393,8 @@ export component AppWindow inherits Window {
     callback play-index(int);
     callback remove-index(int);
     callback clear-queue();
+    callback move-item(int, int);
+    in-out property <bool> show-remaining;
     callback start-drag();
 
     title: root.has-track ? "Listen — " + root.track-title : "Listen";
@@ -683,7 +714,7 @@ export component AppWindow inherits Window {
                     color: seek.dragging ? T.text : T.time;
                     text: Fmt.clock(seek.dragging ? seek.shown * root.duration-secs : root.position-secs);
                 }
-                Text {
+                total := Text {
                     x: parent.width - self.width;
                     width: max(48px, self.preferred-width);
                     height: parent.height;
@@ -692,8 +723,15 @@ export component AppWindow inherits Window {
                     font-family: T.time-font;
                     font-size: 13px;
                     font-weight: 500;
-                    color: T.time;
-                    text: root.duration-secs > 0 ? Fmt.clock(root.duration-secs) : "00:00";
+                    color: total-ta.has-hover ? T.text : T.time;
+                    animate color { duration: T.quick; }
+                    text: root.duration-secs <= 0 ? "00:00"
+                        : root.show-remaining ? "−" + Fmt.clock(max(0, root.duration-secs - floor(root.position-secs)))
+                        : Fmt.clock(root.duration-secs);
+                    total-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.show-remaining = !root.show-remaining; }
+                    }
                 }
                 seek := Slider {
                     x: elapsed.width + 10px;
@@ -906,11 +944,37 @@ export component AppWindow inherits Window {
                         width: parent.width - 28px;
                         height: T.queue-height - 42px - 10px;
                         list := Flickable {
+                            property <int> drag-from: -1;
+                            property <length> drag-dy;
+                            property <int> target: self.drag-from < 0 ? -1 : clamp(round((self.drag-from * 34px + self.drag-dy) / 34px), 0, root.queue.length - 1);
+                            interactive: self.drag-from < 0;
                             width: parent.width - 12px;
                             x: 0;
                             content-height: max(self.height, root.queue.length * 34px);
                             for item[i] in root.queue: QueueRow {
-                                y: i * 34px;
+                                // Reordering: the lifted row follows the pointer; the rows it
+                                // passes slide out of its way.
+                                property <int> target: list.target;
+                                property <length> rest: (list.drag-from < 0 ? i
+                                    : i == list.drag-from ? i
+                                    : list.drag-from < self.target && i > list.drag-from && i <= self.target ? i - 1
+                                    : list.drag-from > self.target && i >= self.target && i < list.drag-from ? i + 1
+                                    : i) * 34px;
+                                animate rest { duration: 180ms; easing: M.settle; }
+                                y: i == list.drag-from ? i * 34px + list.drag-dy : self.rest;
+                                z: i == list.drag-from ? 1 : 0;
+                                lifted: i == list.drag-from;
+                                drag-move(dy) => {
+                                    list.drag-from = i;
+                                    list.drag-dy = dy;
+                                }
+                                drag-end => {
+                                    if (list.target != list.drag-from) {
+                                        root.move-item(list.drag-from, list.target);
+                                    }
+                                    list.drag-from = -1;
+                                    list.drag-dy = 0;
+                                }
                                 width: list.width;
                                 item: item;
                                 current: i == root.current-index;
@@ -1091,8 +1155,14 @@ export component AppWindow inherits Window {
                     font-family: T.time-font;
                     font-size: 11.5px;
                     font-weight: 500;
-                    color: T.time;
-                    text: root.duration-secs > 0 ? Fmt.clock(root.duration-secs) : "00:00";
+                    color: mini-total-ta.has-hover ? T.text : T.time;
+                    text: root.duration-secs <= 0 ? "00:00"
+                        : root.show-remaining ? "−" + Fmt.clock(max(0, root.duration-secs - floor(root.position-secs)))
+                        : Fmt.clock(root.duration-secs);
+                    mini-total-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.show-remaining = !root.show-remaining; }
+                    }
                 }
             }
             DropOverlay {

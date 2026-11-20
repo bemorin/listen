@@ -47,6 +47,8 @@ pub struct AppState {
     pub queue_visible: bool,
     pub mini_width: f32,
     pub repeat: Repeat,
+    /// Show the remaining time instead of the duration.
+    pub show_remaining: bool,
     pub queue: Vec<PathBuf>,
     pub current: Option<usize>,
 }
@@ -61,6 +63,7 @@ impl Default for AppState {
             queue_visible: false,
             mini_width: 390.0,
             repeat: Repeat::Off,
+            show_remaining: false,
             queue: Vec::new(),
             current: None,
         }
@@ -134,6 +137,7 @@ impl AppState {
                     }
                     "loopmode" => s.repeat = Repeat::from_i32(v.parse().unwrap_or(0)),
                     "current" => s.current = v.parse().ok(),
+                    "remaining" => s.show_remaining = v == "1",
                     _ => {}
                 }
             }
@@ -177,6 +181,7 @@ impl AppState {
         settings.push_str(&format!("queueVisible={}\n", self.queue_visible as u8));
         settings.push_str(&format!("miniWidth={:.0}\n", self.mini_width));
         settings.push_str(&format!("loopMode={}\n", self.repeat as i32));
+        settings.push_str(&format!("remaining={}\n", self.show_remaining as u8));
         if let Some(c) = self.current {
             settings.push_str(&format!("current={c}\n"));
         }
@@ -190,6 +195,28 @@ impl AppState {
             }
         }
         atomic_write(&queue_path(&dir), queue.as_bytes());
+    }
+}
+
+impl AppState {
+    /// Moves a queue item, keeping `current` on the same track.
+    pub fn move_item(&mut self, from: usize, to: usize) {
+        if from >= self.queue.len() || to >= self.queue.len() || from == to {
+            return;
+        }
+        let item = self.queue.remove(from);
+        self.queue.insert(to, item);
+        if let Some(c) = self.current {
+            self.current = Some(if c == from {
+                to
+            } else if from < c && to >= c {
+                c - 1
+            } else if from > c && to <= c {
+                c + 1
+            } else {
+                c
+            });
+        }
     }
 }
 
@@ -265,6 +292,21 @@ mod tests {
         }
         assert_eq!(base64_encode(b"Man"), "TWFu");
         assert_eq!(base64_encode(b"Ma"), "TWE=");
+    }
+
+    #[test]
+    fn moving_keeps_the_current_track() {
+        let q = |v: &[usize]| v.iter().map(|i| PathBuf::from(format!("{i}.mp3"))).collect::<Vec<_>>();
+        let mut s = AppState { queue: q(&[0, 1, 2, 3]), current: Some(1), ..Default::default() };
+        s.move_item(1, 3);
+        assert_eq!(s.queue, q(&[0, 2, 3, 1]));
+        assert_eq!(s.current, Some(3));
+        s.move_item(0, 3);
+        assert_eq!(s.queue, q(&[2, 3, 1, 0]));
+        assert_eq!(s.current, Some(2));
+        s.move_item(3, 0);
+        assert_eq!(s.queue, q(&[0, 2, 3, 1]));
+        assert_eq!(s.current, Some(3));
     }
 
     #[test]

@@ -153,7 +153,8 @@ impl App {
         self.ui().window().with_winit_window(f)
     }
 
-    fn save(&self) {
+    fn save(&mut self) {
+        self.state.show_remaining = self.ui().get_show_remaining();
         self.state.save();
     }
 
@@ -1262,6 +1263,7 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.set_queue(ModelRc::from(queue_model.clone()));
     ui.set_volume(state.volume);
     ui.set_repeat_mode(state.repeat as i32);
+    ui.set_show_remaining(state.show_remaining);
     ui.set_topmost(state.always_on_top);
     ui.set_queue_open(state.queue_visible);
     if state.queue_visible {
@@ -1355,6 +1357,12 @@ fn main() -> Result<(), slint::PlatformError> {
     on!(on_play_index, |a, i| a.play_index(i.max(0) as usize));
     on!(on_remove_index, |a, i| a.remove_index(i.max(0) as usize));
     on!(on_clear_queue, |a| a.clear_queue());
+    on!(on_move_item, |a, from, to| {
+        a.state.move_item(from.max(0) as usize, to.max(0) as usize);
+        a.refresh_queue();
+        a.ui().set_selected_index(to);
+        a.save();
+    });
     on!(on_start_drag, |a| {
         a.with_winit(|w| {
             let _ = w.drag_window();

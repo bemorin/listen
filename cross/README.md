@@ -38,11 +38,11 @@ All numbers are private working set (Task Manager → Memory), measured with `be
 
 | | Windows app (WPF, .NET Framework) | Cross-platform app (this folder) |
 | --- | --- | --- |
-| Binary | ~100–130 KB (needs .NET Framework, which ships with Windows) | 9.2 MB, self-contained (no runtime) |
-| Memory at start | ~35 MB | **5.7 MB** |
-| Memory while playing | – | **6.4 MB** |
+| Binary | ~100–130 KB (needs .NET Framework, which ships with Windows) | 8.65 MB, self-contained (no runtime) |
+| Memory at start | ~35 MB | **5.2–5.7 MB** |
+| Memory while playing | – | **5.5 MB** (full), **3.8 MB** (mini), **6.3 MB** (queue open) |
 | Memory after use (queue, mini/full switches) | ~55 MB | **6.5 MB** |
-| CPU while playing | – | ~1–2 % of one core, including decoding |
+| CPU while playing | – | ~2 % of one core (full or mini), ~4 % with the queue's animated bars; decoding included |
 | CPU while paused | – | ~0.3 % of one core; the audio device is released after 20 s |
 
 The binary is larger because nothing is borrowed from the OS. The UI toolkit, font shaping, the decoders and image decoding are all inside the executable.
@@ -118,9 +118,15 @@ State is stored in `%APPDATA%\Listen` (Windows), `~/Library/Application Support/
 
 The Windows app's switches between mini, full and queue are animated here too, without flicker.
 
-Because every layout is a function of the window height, a mode switch is just the native window bounds animating. They follow the same critically damped spring as the Windows app (`WindowMorph.Ease`, 420 ms for a mode change, 340 ms for the queue). A timer steps the bounds about 140 times per second. Slint lays the window out again on each step, so the artwork, titles and controls play their transition continuously, exactly as they do during a manual resize. The queue opens as a drawer: the player stays still while the panel is revealed below it.
+The native window bounds animate on the same critically damped spring as the Windows app (`WindowMorph.Ease`). A timer steps the bounds about 140 times per second, and on Windows each step is a single `SetWindowPos` (move and resize in one call).
 
-On Windows, each step is a single `SetWindowPos` (move and resize in one call). No black or stretched frames showed up in frame-by-frame captures. On macOS and Linux, winit moves and resizes in two calls. A morph that grows upward near the bottom of the screen may wobble by a pixel there. On Wayland, windows cannot position themselves, so they grow from their top-left corner.
+- **Mini and full player** follow a three-step choreography. The content dissolves (90 ms). The empty window morphs (380 ms). The new layout fades in as the morph settles. Intermediate layouts, such as the compact title-bar title, never flash by.
+- **The queue** opens as a drawer: the player stays still while the panel is revealed below it.
+- **Manual resizes** play the adaptive layout continuously, because every layout is a function of the height. Released between two layouts, the window settles on the nearer one.
+
+Frame-by-frame captures on Windows showed no black or stretched frames.
+
+On macOS and Linux, winit moves and resizes in two calls, so a morph that grows upward near the bottom of the screen may wobble by a pixel. On Wayland, windows cannot position themselves, so they grow from their top-left corner.
 
 ## Design refinements in this version
 
@@ -128,14 +134,17 @@ Apple-grade polish, without new weight:
 
 - **Artwork.** Embedded cover art is read from MP3, FLAC and M4A tags, or from `cover.jpg` / `folder.jpg` next to the file. It sits on a soft halo tinted with the artwork's own colour, and rests 10 % smaller while paused, with a spring.
 - **Transport.** The play and pause glyphs cross-fade with a slight scale. Skip glyphs nudge in their direction when pressed. Hover and press states fade in about 120 ms.
-- **Seek bar.** It thickens under the pointer, and its thumb grows. A time bubble follows the pointer. Scrubbing previews the time, and the seek happens on release.
-- **Volume.** The icon reflects the level (muted, low, high). The mouse wheel works over the volume slider, and `↑`/`↓` change it. The slider uses a perceptual curve, so it sounds even across its travel.
-- **Queue.** Titles come from tags, and durations are computed in the background (exactly, even for VBR MP3s without a header). Animated bars mark the playing item. Hovering a row reveals a remove button. Remove and Clear are disabled when they would do nothing.
+- **Seek bar.** It glides continuously: a local clock re-anchored on the audio clock is sampled at the pace the bar needs, about a sixth of a pixel per frame. A song of a few minutes costs about 11 redraws a second; a short clip costs up to 30. The bar thickens under the pointer, and its thumb grows. A time bubble follows the pointer. Scrubbing previews the time, and the seek happens on release. A click on the duration switches to the remaining time (−03:12), and the choice is remembered.
+- **Track changes.** The title and subtitle cross-fade with a slight rise. The artwork dims through the change, and the new cover fades in. Tags are read before the artwork is decoded, so the title is final before the fade ends.
+- **Volume.** The icon reflects the level (muted, low, high). A bubble shows the level while you adjust it. The mouse wheel works over the volume slider, and `↑`/`↓` change it. The slider uses a perceptual curve, so it sounds even across its travel.
+- **Play button.** Its accent ring brightens and glows softly under the pointer.
+- **Queue.** Titles come from tags, and durations are computed in the background (exactly, even for VBR MP3s without a header). Drag a row to reorder: it lifts with a shadow and follows the pointer, and the rows it passes slide out of its way. Bars bounce beside the playing item. Hovering a row reveals a remove button. Remove and Clear are disabled when they would do nothing.
 - **Names.** "03 - Song.flac" is no longer shown with "03" as the artist; tags win when present.
 - **Resting heights.** Released between two layouts after a resize, the window settles on the nearer one (mini, compact, title only, artwork), so it never rests on a half-faded state.
 - **Menu.** The "more" menu shows keyboard shortcuts. Its rows compress to fit a short window.
 - **Tooltips** use one shared, delayed tooltip with a fade. They flip below the control when there is no room above.
-- **Lightness by design.** The audio device opens on Play and closes after 20 s of pause. Redraws happen only when something visibly changes: the playing clock repaints once per second, or when the progress bar moves a whole pixel. Nothing loops while idle.
+- **Artwork you meant.** Blank `Folder.jpg` placeholders, such as those Windows Media Player leaves behind, are ignored. Artwork embedded in a file is always shown.
+- **Lightness by design.** The audio device opens on Play and closes after 20 s of pause. While playing, the window redraws only as often as the progress bar needs to glide. Paused, nothing redraws.
 
 ## Feature gaps and differences
 
