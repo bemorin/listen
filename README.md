@@ -198,6 +198,8 @@ If you find it useful, the easiest ways to support the project are to:
 
 Listen is open source under the [MIT License](LICENSE.md).
 
+The Listen name, logos and app icons are not covered by the MIT License: they remain © Ben Morin, all rights reserved. Forks are welcome under the MIT License, but must use a different name and icon.
+
 See [CHANGELOG.md](CHANGELOG.md) for public release notes.
 
 ---

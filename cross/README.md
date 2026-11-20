@@ -162,6 +162,10 @@ Apple-grade polish, without new weight:
 - **Accessibility:** Slint's screen-reader bridge (AccessKit) is off to keep memory down. Build with `--features accessibility` to turn it on.
 - **Testing:** this version was run and tested on Windows 11. macOS and Linux are built and unit-tested in CI, but not yet exercised by hand.
 
+## License
+
+The code is MIT-licensed like the rest of the repository (`../LICENSE.md`). The Listen name, logo and icons (`assets/icon-*.png`, `assets/listen.ico`, and the mark drawn in `ui/app.slint`) are excluded and remain © Ben Morin, all rights reserved.
+
 ## Layout of this folder
 
 ```text
