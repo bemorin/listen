@@ -32,7 +32,8 @@ slint-build = "1.19"
 winresource = "0.1"
 
 [profile.release]
-opt-level = "s"
+# "z" measured 8.65 MB vs 9.2 MB for "s", with the same CPU while playing.
+opt-level = "z"
 lto = true
 codegen-units = 1
 panic = "abort"

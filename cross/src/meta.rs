@@ -17,6 +17,8 @@ pub struct TrackMeta {
     pub album: Option<String>,
     pub duration: Option<Duration>,
     pub cover: Option<Vec<u8>>,
+    /// The cover came from an image file next to the track, not from its tags.
+    pub cover_from_folder: bool,
 }
 
 /// Title and subtitle shown for a file. Tags win; otherwise the Windows app's rule:
@@ -122,6 +124,7 @@ pub fn probe(path: &Path, want_cover: bool, exact: bool) -> Option<TrackMeta> {
 
     if want_cover && out.cover.is_none() {
         out.cover = folder_cover(path);
+        out.cover_from_folder = out.cover.is_some();
     }
     Some(out)
 }
@@ -188,7 +191,9 @@ pub struct Artwork {
     pub tint: [u8; 3],
 }
 
-pub fn decode_artwork(data: &[u8], size: u32) -> Option<Artwork> {
+/// `reject_flat` drops near-uniform images: right for folder images (Windows Media Player
+/// leaves blank `Folder.jpg` placeholders), not for artwork embedded on purpose.
+pub fn decode_artwork(data: &[u8], size: u32, reject_flat: bool) -> Option<Artwork> {
     let img = image::load_from_memory(data).ok()?.to_rgba8();
     let (w, h) = img.dimensions();
     if w == 0 || h == 0 {
@@ -212,6 +217,18 @@ pub fn decode_artwork(data: &[u8], size: u32) -> Option<Artwork> {
         n += 1;
     }
     let n = n.max(1);
+    let mean = [(r / n) as f64, (g / n) as f64, (b / n) as f64];
+    // A flat image (a placeholder `Folder.jpg`, a blank thumbnail) is not artwork.
+    let mut var = 0f64;
+    for px in scaled.pixels().step_by(7) {
+        for c in 0..3 {
+            let d = px[c] as f64 - mean[c];
+            var += d * d;
+        }
+    }
+    if reject_flat && (var / (3 * n) as f64).sqrt() < 6.0 {
+        return None;
+    }
     Some(Artwork {
         size: actual,
         rgba: scaled.into_raw(),
@@ -253,6 +270,23 @@ mod tests {
             display_names(&p, Some(&tagged)),
             ("Real".into(), "Band".into())
         );
+    }
+
+    #[test]
+    fn flat_images_are_not_artwork() {
+        let flat = image::RgbaImage::from_pixel(64, 64, image::Rgba([3, 3, 3, 255]));
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgba8(flat)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        assert!(decode_artwork(&png, 256, true).is_none());
+        assert!(decode_artwork(&png, 256, false).is_some());
+        let busy = image::RgbaImage::from_fn(64, 64, |x, y| image::Rgba([(x * 4) as u8, (y * 4) as u8, 90, 255]));
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgba8(busy)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        assert!(decode_artwork(&png, 256, true).is_some());
     }
 
     #[test]

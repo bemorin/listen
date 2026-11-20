@@ -145,7 +145,10 @@ export component PlayButton inherits IconButton {
     in property <length> glyph: 19px;
     rest: T.elevated;
     border-width: 1px;
-    border-color: T.accent;
+    border-color: root.hovered ? #FF9A62 : T.accent;
+    drop-shadow-blur: root.hovered ? 14px : 0px;
+    drop-shadow-color: #F47A3A38;
+    animate border-color, drop-shadow-blur { duration: T.medium; easing: ease-out; }
     property <length> inner: root.down ? root.glyph * 0.88 : root.glyph;
     animate inner { duration: T.medium; easing: M.spring; }
 

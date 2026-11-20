@@ -162,21 +162,26 @@ component DragSurface inherits TouchArea {
     }
 }
 
-// Three bars beside the current queue item: they rise when it plays and settle when it
-// pauses. Deliberately not looping, so an open queue costs no redraws while playing.
+// Three bars beside the current queue item. While it plays they move continuously, each on
+// its own slow wave; paused, they settle low.
 component NowPlaying inherits Rectangle {
     in property <bool> playing;
     width: 11px;
     height: 10px;
+    in property <float> wave;
+    property <float> t: root.wave * 1000;
     for i in 3: Rectangle {
-        property <[float]> levels: [0.55, 1.0, 0.7];
+        property <float> phase: i * 2.1;
+        property <float> speed: 0.0052 + i * 0.0011;
+        property <float> level: root.playing
+            ? 0.55 + 0.3 * sin((root.t * self.speed + self.phase) * 1rad) + 0.15 * sin((root.t * self.speed * 2.3 + self.phase * 1.7) * 1rad)
+            : 0.3;
         x: i * 4px;
         width: 2.4px;
         border-radius: 1px;
         background: T.accent;
-        height: root.playing ? root.height * self.levels[i] : root.height * 0.3;
+        height: root.height * clamp(self.level, 0.18, 1);
         y: root.height - self.height;
-        animate height { duration: 260ms + i * 70ms; easing: M.spring; }
     }
 }
 
@@ -185,6 +190,7 @@ component QueueRow inherits Rectangle {
     in property <bool> current;
     in property <bool> selected;
     in property <bool> playing;
+    in property <float> wave;
     in property <string> remove-tip;
     callback select;
     callback activate;
@@ -201,6 +207,7 @@ component QueueRow inherits Rectangle {
     if root.current: NowPlaying {
         x: 8px;
         playing: root.playing;
+        wave: root.wave;
     }
     Text {
         x: 28px;
@@ -304,6 +311,12 @@ export component AppWindow inherits Window {
     in property <bool> playing;
     in property <float> position-secs;
     in property <float> duration-secs;
+    // Playback progress (0..1), updated by the app at the pace the bar needs to move
+    // smoothly (a fraction of a pixel per frame), and the clock driving the queue's bars.
+    in property <float> progress;
+    in property <float> wave;
+    // Opacity of the window content during a mode change (the container morphs while empty).
+    in property <float> content-fade: 1;
     in property <bool> can-seek;
     in property <float> volume: 0.82;
     in property <int> repeat-mode;
@@ -370,8 +383,32 @@ export component AppWindow inherits Window {
     property <float> compact-opacity: root.content-h < T.hero-min-height ? 1 : clamp(1 - root.to-hero * 2, 0, 1);
     property <float> art-opacity: clamp((root.content-h - T.hero-min-height - T.artwork-fade-start) / T.fade-band, 0, 1);
     property <bool> tight: root.width - T.mini-min-width < T.mini-title-min-space;
-    property <float> shown-progress: root.duration-secs > 0 ? clamp(root.position-secs / root.duration-secs, 0, 1) : 0;
+    property <float> shown-progress: clamp(root.progress, 0, 1);
     property <string> shortcut: root.mac ? "⌘" : "Ctrl+";
+
+    // Track change: the shown title and subtitle trail the real ones through a short
+    // cross-fade with a slight rise, instead of jumping.
+    property <string> shown-title: root.has-track ? root.track-title : root.s-nothing;
+    property <string> shown-subtitle: root.track-subtitle;
+    property <float> swap: 1;
+    animate swap { duration: 150ms; easing: ease-out; }
+    property <bool> swapping;
+    property <string> next-title: root.has-track ? root.track-title : root.s-nothing;
+    property <string> next-key: root.next-title + " | " + root.track-subtitle;
+    changed next-key => {
+        root.swapping = true;
+        root.swap = 0;
+    }
+    Timer {
+        interval: 150ms;
+        running: root.swapping;
+        triggered => {
+            root.shown-title = root.next-title;
+            root.shown-subtitle = root.track-subtitle;
+            root.swapping = false;
+            root.swap = 1;
+        }
+    }
 
     // Strings
     property <string> s-nothing: L.fr ? "Aucun titre" : "Nothing playing";
@@ -386,6 +423,7 @@ export component AppWindow inherits Window {
 
 
     fs := FocusScope {
+        opacity: root.content-fade;
         init => { self.focus(); }
         key-pressed(e) => {
             if (e.modifiers.control || e.modifiers.meta) {
@@ -459,14 +497,16 @@ export component AppWindow inherits Window {
                 visible: root.compact-opacity > 0;
                 opacity: root.compact-opacity;
                 Text {
-                    text: root.has-track ? root.track-title : root.s-nothing;
+                    text: root.shown-title;
+                    opacity: root.swap;
                     color: T.text;
                     font-size: 14px;
                     font-weight: 600;
                     overflow: elide;
                 }
                 Text {
-                    text: root.has-track ? root.track-subtitle : root.s-add-hint;
+                    text: root.has-track ? root.shown-subtitle : root.s-add-hint;
+                    opacity: root.swap;
                     color: T.muted;
                     font-size: 11px;
                     overflow: elide;
@@ -551,7 +591,7 @@ export component AppWindow inherits Window {
                     height: self.width;
                     y: (hero.art-room - self.height) / 2;
                     visible: root.art-opacity > 0 && self.width > 4px;
-                    opacity: root.art-opacity;
+                    opacity: root.art-opacity * (0.4 + 0.6 * root.swap);
                     border-radius: 20px * self.width / T.artwork;
                     background: T.elevated;
                     border-width: root.has-artwork ? 0px : 1px;
@@ -561,13 +601,16 @@ export component AppWindow inherits Window {
                     drop-shadow-color: #00000070;
                     clip: true;
                     Text {
-                        visible: !root.has-artwork;
+                        opacity: root.has-artwork ? 0 : 1;
+                        animate opacity { duration: 260ms; easing: ease-out; }
                         text: "♪";
                         color: T.art-text;
                         font-size: 54px * art.width / T.artwork;
                     }
                     Image {
-                        visible: root.has-artwork;
+                        opacity: root.has-artwork ? 1 : 0;
+                        visible: self.opacity > 0.01;
+                        animate opacity { duration: 260ms; easing: ease-out; }
                         width: parent.width;
                         height: parent.height;
                         source: root.artwork;
@@ -576,10 +619,11 @@ export component AppWindow inherits Window {
                     }
                 }
                 Text {
-                    y: hero.height - T.title-block + 10px;
+                    y: hero.height - T.title-block + 10px + (1 - root.swap) * 6px;
+                    opacity: root.swap;
                     width: parent.width;
                     height: 32px;
-                    text: root.has-track ? root.track-title : root.s-nothing;
+                    text: root.shown-title;
                     color: T.text;
                     font-size: 22px;
                     font-weight: 600;
@@ -588,10 +632,11 @@ export component AppWindow inherits Window {
                     overflow: elide;
                 }
                 if root.has-track: Text {
-                    y: hero.height - 30px;
+                    y: hero.height - 30px + (1 - root.swap) * 6px;
+                    opacity: root.swap;
                     width: parent.width;
                     height: 30px;
-                    text: root.track-subtitle;
+                    text: root.shown-subtitle;
                     color: T.muted;
                     font-size: 12px;
                     horizontal-alignment: center;
@@ -704,7 +749,7 @@ export component AppWindow inherits Window {
                             : "M4,8 L8,8 L12,4 L12,16 L8,12 L4,12 Z M15,8 C16.5,9 16.5,11 15,12 M17,6 C20,8 20,12 17,14";
                     clicked => { root.toggle-mute(); }
                 }
-                Slider {
+                volume-slider := Slider {
                     x: volume-button.width + 5px;
                     width: 88px;
                     height: 24px;
@@ -713,6 +758,26 @@ export component AppWindow inherits Window {
                     value: root.volume;
                     scrub(v) => { root.set-volume(v); }
                     commit(v) => { root.set-volume(v); }
+                }
+                // Level bubble while the volume is being changed.
+                Rectangle {
+                    property <bool> on: controls.show-volume-slider && (volume-slider.hovered || volume-slider.dragging);
+                    x: volume-slider.x + 7px + (volume-slider.width - 14px) * root.volume - self.width / 2;
+                    y: -14px;
+                    width: vol-text.preferred-width + 14px;
+                    height: 20px;
+                    border-radius: 6px;
+                    background: T.tooltip;
+                    border-width: 1px;
+                    border-color: T.strong-border;
+                    opacity: self.on ? 1 : 0;
+                    animate opacity { duration: T.quick; }
+                    vol-text := Text {
+                        text: round(root.volume * 100) + " %";
+                        color: T.text;
+                        font-family: T.time-font;
+                        font-size: 11px;
+                    }
                 }
 
                 // Play sits on the window's centre whenever the side groups leave room.
@@ -851,6 +916,7 @@ export component AppWindow inherits Window {
                                 current: i == root.current-index;
                                 selected: i == root.selected-index;
                                 playing: root.playing;
+                                wave: root.wave;
                                 remove-tip: L.fr ? "Retirer" : "Remove";
                                 select => { root.selected-index = i; fs.focus(); }
                                 activate => { root.play-index(i); }
@@ -922,12 +988,12 @@ export component AppWindow inherits Window {
                 width: max(0px, mini-controls.x - self.x - 10px);
                 height: mini.row-h;
                 vertical-alignment: center;
-                text: root.has-track ? root.track-title : "Listen";
+                text: root.has-track ? root.shown-title : "Listen";
                 color: T.text;
                 font-size: 13px;
                 font-weight: 600;
                 overflow: elide;
-                opacity: root.tight ? 0 : 1;
+                opacity: root.tight ? 0 : root.swap;
                 animate opacity { duration: T.quick; }
             }
             mini-controls := HorizontalLayout {

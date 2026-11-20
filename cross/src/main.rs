@@ -23,11 +23,22 @@ slint::include_modules!();
 const DOCK_TOLERANCE: f64 = 16.0;
 const MODE_MORPH: Duration = Duration::from_millis(420);
 const QUEUE_REVEAL: Duration = Duration::from_millis(340);
+// Mode change choreography: the content dissolves, the window morphs while empty, and the
+// new layout fades in as the morph settles, so no intermediate layout ever flashes by.
+const FADE_OUT: f64 = 0.09;
+const MORPH_DELAY: f64 = 0.04;
+const FADE_IN: f64 = 0.17;
+const FADE_IN_AT: f64 = 0.5; // fraction of the morph when the new layout starts to appear
 
 pub fn is_french() -> bool {
     sys_locale::get_locale()
         .map(|l| l.to_ascii_lowercase().starts_with("fr"))
         .unwrap_or(false)
+}
+
+fn ease_out(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    1.0 - (1.0 - t).powi(3)
 }
 
 /// Critically damped spring, as in the Windows app (WindowMorph.Ease).
@@ -61,6 +72,8 @@ struct Morph {
     start: Instant,
     duration: Duration,
     kind: MorphKind,
+    /// Dissolve the content while the window morphs (mode changes).
+    fade: bool,
 }
 
 enum MetaJob {
@@ -69,7 +82,8 @@ enum MetaJob {
 }
 
 enum MetaResult {
-    Current(u64, Option<meta::TrackMeta>, Option<meta::Artwork>),
+    Current(u64, Option<meta::TrackMeta>),
+    Art(u64, Option<meta::Artwork>),
     Duration(PathBuf, Option<Duration>, Option<String>),
 }
 
@@ -99,6 +113,10 @@ struct App {
     placed_to: Option<Rect>,
     morph: Option<Morph>,
     morph_timer: slint::Timer,
+    progress_timer: slint::Timer,
+    progress_interval: std::cell::Cell<Duration>,
+    clock_anchor: std::cell::Cell<Option<(f64, Instant)>>,
+    wave_epoch: Instant,
     resize_settle: slint::Timer,
     resize_start: Option<(f64, f64)>,
     last_size: (f64, f64),
@@ -181,9 +199,11 @@ impl App {
         let ui = self.ui();
         self.generation += 1;
         self.current_meta = None;
-        ui.set_has_artwork(false);
+        // The previous artwork stays until the new track's arrives (or is known to be absent),
+        // so a track change cross-fades instead of flashing the placeholder.
         match self.current_path().cloned() {
             None => {
+                ui.set_has_artwork(false);
                 ui.set_has_track(false);
                 ui.set_track_title("".into());
                 ui.set_track_subtitle("".into());
@@ -354,6 +374,13 @@ impl App {
     }
 
     fn seek_fraction(&mut self, f: f32) {
+        if !self.engine.is_loaded() {
+            // The restored track is shown but not opened yet: open it, paused, then seek.
+            match self.state.current {
+                Some(i) => self.load_index(i, false),
+                None => return,
+            }
+        }
         if let Some(d) = self.engine.duration() {
             self.engine.seek(d.mul_f32(f.clamp(0.0, 1.0)));
             self.tick_position();
@@ -482,6 +509,7 @@ impl App {
         let playing = self.engine.is_playing();
         let ui = self.ui();
         ui.set_playing(playing);
+        self.retime_progress();
         let has = self.state.current.is_some();
         let pos = self.engine.position();
         if let Some(m) = &mut self.media {
@@ -498,29 +526,70 @@ impl App {
         }
     }
 
+    /// Publishes the playback position. A local clock, re-anchored on the audio clock when
+    /// they drift apart, keeps the motion even between the device's buffer-sized steps.
     fn tick_position(&self) {
-        if self.engine.is_loaded() {
-            self.ui()
-                .set_position_secs(self.engine.position().as_secs_f32());
+        if !self.engine.is_loaded() {
+            return;
+        }
+        let ui = self.ui();
+        let audio = self.engine.position().as_secs_f64();
+        let playing = self.engine.is_playing();
+        let pos = match self.clock_anchor.get() {
+            Some((at, start)) if playing => {
+                let predicted = at + start.elapsed().as_secs_f64();
+                if (predicted - audio).abs() > 0.08 {
+                    self.clock_anchor.set(Some((audio, Instant::now())));
+                    audio
+                } else {
+                    predicted
+                }
+            }
+            _ => {
+                self.clock_anchor.set(playing.then(|| (audio, Instant::now())));
+                audio
+            }
+        } as f32;
+        if pos.floor() != ui.get_position_secs().floor() || !playing {
+            ui.set_position_secs(pos);
+        }
+        let dur = ui.get_duration_secs();
+        if dur > 0.0 {
+            ui.set_progress((pos / dur).clamp(0.0, 1.0));
+        }
+        if playing && ui.get_queue_shown() {
+            ui.set_wave(self.wave_epoch.elapsed().as_secs_f32());
         }
     }
 
-    /// Clock update while playing: only when the shown second changes or the progress bar
-    /// would move by a whole pixel, so a playing Listen redraws as little as possible.
-    fn tick_position_lazily(&self) {
-        let ui = self.ui();
-        let pos = self.engine.position().as_secs_f32();
-        let old = ui.get_position_secs();
-        let dur = ui.get_duration_secs();
-        let bar_px = (ui.window().size().width as f32 - 160.0 * self.scale() as f32).max(60.0);
-        let moved_px = if dur > 0.0 {
-            (pos - old).abs() / dur * bar_px
-        } else {
-            0.0
-        };
-        if pos.floor() != old.floor() || moved_px >= 1.0 || pos < old {
-            ui.set_position_secs(pos);
+    /// The clock runs only while playing, at the pace the progress bar needs to glide: about a
+    /// sixth of a pixel per frame, between 10 and 30 frames a second (24 with the queue's bars
+    /// moving). A song of a few minutes needs about 11 redraws a second.
+    fn retime_progress(&self) {
+        if !self.engine.is_playing() {
+            self.progress_timer.stop();
+            self.progress_interval.set(Duration::ZERO);
+            self.clock_anchor.set(None);
+            self.tick_position();
+            return;
         }
+        let ui = self.ui();
+        let dur = ui.get_duration_secs().max(0.0) as f64;
+        let width = ui.window().size().width as f64;
+        let scale = self.scale();
+        let reserved = if ui.get_mini() { 110.0 } else { 160.0 };
+        let bar_px = (width - reserved * scale).max(40.0);
+        let mut ms = if dur > 0.0 { dur * 1000.0 / (bar_px * 6.0) } else { 100.0 };
+        if ui.get_queue_shown() {
+            ms = ms.min(42.0);
+        }
+        let interval = Duration::from_millis(ms.clamp(33.0, 100.0) as u64);
+        if self.progress_interval.get() != interval {
+            self.progress_interval.set(interval);
+            self.progress_timer
+                .start(slint::TimerMode::Repeated, interval, || with_app(|a| a.tick_position()));
+        }
+        self.tick_position();
     }
 
     fn tick(&mut self) {
@@ -533,13 +602,15 @@ impl App {
                 self.next(true);
             }
         }
-        if self.engine.is_playing() {
-            self.tick_position_lazily();
-        }
         self.engine.tick();
     }
 
     fn drain_meta(&mut self) {
+        self.drain_meta_results();
+        self.retime_progress();
+    }
+
+    fn drain_meta_results(&mut self) {
         while let Ok(r) = self.meta_rx.try_recv() {
             match r {
                 MetaResult::Duration(p, d, title) => {
@@ -571,7 +642,33 @@ impl App {
                         }
                     }
                 }
-                MetaResult::Current(gen, m, art) => {
+                MetaResult::Art(gen, art) => {
+                    if gen != self.generation {
+                        continue;
+                    }
+                    let ui = self.ui();
+                    let mut cover_url = None;
+                    if let Some(a) = &art {
+                        let buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+                            &a.rgba, a.size, a.size,
+                        );
+                        ui.set_artwork(slint::Image::from_rgba8(buf));
+                        ui.set_tint(slint::Color::from_rgb_u8(a.tint[0], a.tint[1], a.tint[2]));
+                        ui.set_has_artwork(true);
+                        cover_url = self.write_cover(a);
+                    } else {
+                        ui.set_has_artwork(false);
+                    }
+                    if let (Some(url), Some(path)) = (cover_url, self.current_path().cloned()) {
+                        let (title, subtitle) = meta::display_names(&path, self.current_meta.as_ref());
+                        let album = self.current_meta.as_ref().and_then(|m| m.album.clone()).unwrap_or_default();
+                        let duration = self.engine.duration();
+                        if let Some(media) = &mut self.media {
+                            media.set_track(&title, &subtitle, &album, duration, Some(&url));
+                        }
+                    }
+                }
+                MetaResult::Current(gen, m) => {
                     if gen != self.generation {
                         continue;
                     }
@@ -590,23 +687,10 @@ impl App {
                             ui.set_duration_secs(d.as_secs_f32());
                         }
                     }
-                    let mut cover_url = None;
-                    if let Some(a) = &art {
-                        let buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
-                            &a.rgba, a.size, a.size,
-                        );
-                        ui.set_artwork(slint::Image::from_rgba8(buf));
-                        ui.set_tint(slint::Color::from_rgb_u8(a.tint[0], a.tint[1], a.tint[2]));
-                        ui.set_has_artwork(true);
-                        cover_url = self.write_cover(a);
-                    } else {
-                        ui.set_artwork(slint::Image::default());
-                        ui.set_has_artwork(false);
-                    }
                     let album = m.as_ref().and_then(|m| m.album.clone()).unwrap_or_default();
                     let duration = self.engine.duration();
                     if let Some(media) = &mut self.media {
-                        media.set_track(&title, &subtitle, &album, duration, cover_url.as_deref());
+                        media.set_track(&title, &subtitle, &album, duration, None);
                     }
                     self.current_meta = m;
                 }
@@ -807,12 +891,14 @@ impl App {
             self.work_area(),
             self.scale()
         );
+        let fade = matches!(kind, MorphKind::Mode) && !duration.is_zero() && !self.snapping;
         self.morph = Some(Morph {
             from,
             to,
             start: Instant::now(),
             duration,
             kind,
+            fade,
         });
         self.ui().set_morphing(true);
         self.apply_constraints();
@@ -834,12 +920,27 @@ impl App {
 
     fn step_morph(&mut self) {
         let Some(m) = &self.morph else { return };
-        let t = if m.duration.is_zero() {
-            1.0
+        let elapsed = m.start.elapsed().as_secs_f64();
+        let dur = m.duration.as_secs_f64();
+        let (t, done, fade) = if dur == 0.0 {
+            (1.0, true, 1.0)
+        } else if m.fade {
+            let t = ((elapsed - MORPH_DELAY) / dur).clamp(0.0, 1.0);
+            let fade_in_at = MORPH_DELAY + dur * FADE_IN_AT;
+            let fade = if elapsed < FADE_OUT {
+                1.0 - ease_out(elapsed / FADE_OUT)
+            } else if elapsed < fade_in_at {
+                0.0
+            } else {
+                ease_out(((elapsed - fade_in_at) / FADE_IN).min(1.0))
+            };
+            let done = elapsed >= (MORPH_DELAY + dur).max(fade_in_at + FADE_IN);
+            (t, done, fade)
         } else {
-            m.start.elapsed().as_secs_f64() / m.duration.as_secs_f64()
+            let t = (elapsed / dur).min(1.0);
+            (t, t >= 1.0, 1.0)
         };
-        let e = ease(t.min(1.0));
+        let e = ease(t);
         let r = m.from.lerp(&m.to, e);
         let scale = self.scale();
         let ui = self.ui();
@@ -852,8 +953,9 @@ impl App {
             }
             MorphKind::Mode => {}
         }
+        ui.set_content_fade(fade as f32);
         self.set_bounds(r);
-        if t >= 1.0 {
+        if done {
             self.finish_morph();
         }
     }
@@ -870,8 +972,10 @@ impl App {
             MorphKind::Mode => {}
         }
         ui.set_morphing(false);
+        ui.set_content_fade(1.0);
         self.last_size = (m.to.w / self.scale(), m.to.h / self.scale());
         self.apply_constraints();
+        self.retime_progress();
         if self.snapping {
             // A resize settled onto a resting height: now adopt the mode it landed in.
             self.sync_mode_with_size();
@@ -916,6 +1020,7 @@ impl App {
         self.last_size = (w, h);
         // Constraints follow the layout the window is in right now (mini or full).
         self.apply_constraints();
+        self.retime_progress();
         self.resize_settle.start(
             slint::TimerMode::SingleShot,
             Duration::from_millis(280),
@@ -1021,18 +1126,23 @@ fn spawn_meta_worker(jobs: mpsc::Receiver<MetaJob>, results: mpsc::Sender<MetaRe
                 if matches!(job, MetaJob::Current(..)) {
                     pending.retain(|j| !matches!(j, MetaJob::Current(..)));
                 }
-                let result = match job {
+                let send = |r: MetaResult| {
+                    let ok = results.send(r).is_ok();
+                    let _ = slint::invoke_from_event_loop(|| with_app(|app| app.drain_meta()));
+                    ok
+                };
+                let ok = match job {
                     MetaJob::Current(path, gen) => {
-                        let m = meta::probe(&path, true, false);
-                        let art = m
-                            .as_ref()
-                            .and_then(|m| m.cover.as_deref())
-                            .and_then(|c| meta::decode_artwork(c, 256));
-                        let m = m.map(|mut m| {
-                            m.cover = None;
-                            m
-                        });
-                        MetaResult::Current(gen, m, art)
+                        // Tags first (fast), so the title is final before the cross-fade ends;
+                        // then the artwork, which may take a few tens of milliseconds to decode.
+                        let mut m = meta::probe(&path, true, false);
+                        let cover = m.as_mut().and_then(|m| m.cover.take());
+                        let from_folder = m.as_ref().map(|m| m.cover_from_folder).unwrap_or(false);
+                        send(MetaResult::Current(gen, m))
+                            && send(MetaResult::Art(
+                                gen,
+                                cover.as_deref().and_then(|c| meta::decode_artwork(c, 256, from_folder)),
+                            ))
                     }
                     MetaJob::Duration(path) => {
                         let m = meta::probe(&path, false, true);
@@ -1041,13 +1151,12 @@ fn spawn_meta_worker(jobs: mpsc::Receiver<MetaJob>, results: mpsc::Sender<MetaRe
                             .as_ref()
                             .and_then(|m| m.title.as_ref())
                             .map(|_| meta::display_names(&path, m.as_ref()).0);
-                        MetaResult::Duration(path, d, title)
+                        send(MetaResult::Duration(path, d, title))
                     }
                 };
-                if results.send(result).is_err() {
+                if !ok {
                     return;
                 }
-                let _ = slint::invoke_from_event_loop(|| with_app(|app| app.drain_meta()));
             }
         })
         .expect("metadata thread");
@@ -1178,6 +1287,10 @@ fn main() -> Result<(), slint::PlatformError> {
         placed_to: None,
         morph: None,
         morph_timer: slint::Timer::default(),
+        progress_timer: slint::Timer::default(),
+        progress_interval: std::cell::Cell::new(Duration::ZERO),
+        clock_anchor: std::cell::Cell::new(None),
+        wave_epoch: Instant::now(),
         resize_settle: slint::Timer::default(),
         resize_start: None,
         last_size: (start_w, start_h),
@@ -1205,7 +1318,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 if let Some(Some(d)) = a.durations.get(&path) {
                     a.ui().set_duration_secs(d.as_secs_f32());
                 }
-                a.ui().set_can_seek(false);
+                a.ui().set_can_seek(true);
             }
         }
     }
@@ -1366,6 +1479,43 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             a.apply_constraints();
         });
+    });
+
+    // Debug builds only: drive the app from a command file (one command per line), so it can
+    // be exercised without synthetic keyboard or mouse input.
+    #[cfg(debug_assertions)]
+    let _debug_cmds = std::env::var_os("LISTEN_DEBUG_CMDS").map(|path| {
+        let path = PathBuf::from(path);
+        let timer = slint::Timer::default();
+        timer.start(slint::TimerMode::Repeated, Duration::from_millis(100), move || {
+            let Ok(text) = std::fs::read_to_string(&path) else { return };
+            if text.trim().is_empty() {
+                return;
+            }
+            let _ = std::fs::write(&path, "");
+            for line in text.lines() {
+                let mut parts = line.split_whitespace();
+                let cmd = parts.next().unwrap_or("");
+                let args: Vec<f64> = parts.filter_map(|p| p.parse().ok()).collect();
+                with_app(|a| match cmd {
+                    "mini" => a.toggle_mini(),
+                    "queue" => a.toggle_queue(),
+                    "play" => a.toggle_play(),
+                    "next" => a.next(false),
+                    "prev" => a.previous(),
+                    "repeat" => a.cycle_repeat(),
+                    "seek" => a.seek_fraction(args.first().copied().unwrap_or(0.0) as f32),
+                    "size" if args.len() == 2 => {
+                        let s = a.scale();
+                        if let Some(b) = a.bounds() {
+                            a.set_bounds(Rect { w: args[0] * s, h: args[1] * s, ..b });
+                        }
+                    }
+                    _ => eprintln!("unknown debug command: {line}"),
+                });
+            }
+        });
+        timer
     });
 
     ui.run()?;
