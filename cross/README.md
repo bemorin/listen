@@ -132,8 +132,8 @@ On macOS and Linux, winit moves and resizes in two calls, so a morph that grows 
 Apple-grade polish, without new weight:
 
 - **Light and glass.** The interface is neutral: white glyphs, a white progress bar, and translucent "glass" surfaces with a faint highlight edge (queue drawer, menu, tooltips, pills). The colour comes from the music. Two colours sampled from the artwork, made vivid enough to read as light, bleed softly into the window and cross-fade on track change. Without artwork, the window uses a quiet warm/cool duotone. A fine grain keeps these very soft gradients from banding.
-- **New mark.** The orange note becomes a short waveform in a periwinkle, lavender and aqua gradient, on a dark glass tile. It is used for the app icon, the window and the title bar (`assets/make-icon.ps1` renders it, and `assets/make-ico.py` packs the `.ico`). The same gradient lights the queue's now-playing bars. The Windows app's icon in `../build` is unchanged.
-- **Play disc.** Play and pause sit on a light disc with a dark glyph, like a system Now Playing control. It brightens under the pointer and dips when pressed. All other buttons light up as soft circles. Toggles that are on (always on top, queue, repeat) show a glass disc behind a full-white glyph.
+- **New mark.** The orange note becomes a silver disc with a sound wave carved through it; the wave's central peaks draw an M. The icon has no tile and a transparent background, like other taskbar and dock icons. Below 32 px, the wave has fewer oscillations and a thicker line, so it stays legible. A faint edge keeps the disc defined on light taskbars. The same disc is the title-bar logo. `assets/make-icon.ps1` renders the PNGs and `assets/make-ico.py` packs `listen.ico`. The palette stays black, white and silver: the queue's now-playing bars are a silver gradient. The Windows app's icon in `../build` is unchanged.
+- **Play disc.** Play and pause sit on a light disc with a dark glyph, like a system Now Playing control. It brightens under the pointer and dips when pressed. All other buttons light up as soft circles. Toggles that are on (always on top, queue, repeat) show a glass disc behind a full-white glyph. Repeat is the same 32 px size as the queue and menu buttons.
 
 - **Artwork.** Embedded cover art is read from MP3, FLAC and M4A tags, or from `cover.jpg` / `folder.jpg` next to the file. It sits on a soft halo tinted with the artwork's own colour, and rests 10 % smaller while paused, with a spring.
 - **Transport.** The play and pause glyphs cross-fade with a slight scale. Skip glyphs nudge in their direction when pressed. Hover and press states fade in about 120 ms.
@@ -146,6 +146,7 @@ Apple-grade polish, without new weight:
 - **Menu.** The "more" menu shows keyboard shortcuts. Its rows compress to fit a short window.
 - **Tooltips** use one shared, delayed tooltip with a fade. They flip below the control when there is no room above.
 - **Artwork you meant.** Blank `Folder.jpg` placeholders, such as those Windows Media Player leaves behind, are ignored. Artwork embedded in a file is always shown.
+- **No white flash on Windows.** When the window grows, Windows paints the new area with the window class's brush before Listen draws it. That brush is set to the app's background colour.
 - **Lightness by design.** The audio device opens on Play and closes after 20 s of pause. While playing, the window redraws only as often as the progress bar needs to glide. Paused, nothing redraws.
 
 ## Feature gaps and differences

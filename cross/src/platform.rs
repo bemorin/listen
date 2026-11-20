@@ -206,6 +206,16 @@ pub fn style_window(_w: &Window) {
                 4,
             );
         }
+        // When the window grows, Windows paints the newly exposed strip with the class brush
+        // before Listen draws it. Make that brush the app's own background, not white.
+        unsafe {
+            use windows_sys::Win32::Graphics::Gdi::CreateSolidBrush;
+            use windows_sys::Win32::UI::WindowsAndMessaging::{SetClassLongPtrW, GCLP_HBRBACKGROUND};
+            let brush = CreateSolidBrush(0x0014_1414);
+            if !brush.is_null() {
+                SetClassLongPtrW(hwnd as _, GCLP_HBRBACKGROUND, brush as isize);
+            }
+        }
     }
 }
 

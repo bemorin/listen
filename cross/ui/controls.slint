@@ -202,8 +202,8 @@ export component RepeatButton inherits IconButton {
     active: self.mode != 0;
     property <color> c: root.mode == 0 ? T.toggle-off : T.toggle-on;
     Glyph {
-        width: root.small ? 16px : 18px;
-        height: root.small ? 9.5px : 10.5px;
+        width: root.small ? 16px : 19.5px;
+        height: root.small ? 9.5px : 11.4px;
         y: (parent.height - self.height) / 2 + (root.mode == 2 ? 2.5px : 0);
         animate y { duration: T.medium; easing: M.spring; }
         bx: 1.5;
@@ -218,7 +218,7 @@ export component RepeatButton inherits IconButton {
         text: "1";
         color: T.accent;
         font-family: T.time-font;
-        font-size: root.small ? 7px : 7.6px;
+        font-size: root.small ? 7px : 8px;
         font-weight: 700;
         y: root.mode == 2 ? parent.height / 2 - 11px : parent.height / 2 - 6px;
         opacity: root.mode == 2 ? 1 : 0;
